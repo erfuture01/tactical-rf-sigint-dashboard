@@ -349,6 +349,19 @@ HTML_PAGE = """<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- 433 MHz Tactical Drill Trigger -->
+      <div class="switch-box" style="border-left-color: #d29922; margin-top: -6px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <div style="font-weight: bold; font-size: 13px; color: #e3b341;">TACTICAL 433 MHz DRILL (WITHOUT WI-FI)</div>
+            <div style="font-size: 11px; color: #8b949e; margin-top: 3px;">
+              Simulates covert 433 MHz encrypted comms / key fob rolling code intercept.
+            </div>
+          </div>
+          <button id="drill-btn" class="btn" style="background: #9e6a03;" onclick="trigger433Drill()">TRIGGER 433M DRILL</button>
+        </div>
+      </div>
+
       <!-- Telemetry Rows -->
       <div class="row"><span>INTERCEPT STATUS:</span><span id="threat-stat" class="val safe">SECURE</span></div>
       <div class="row"><span>ACTIVE BAND:</span><span id="band-val" class="val">---</span></div>
@@ -580,6 +593,25 @@ HTML_PAGE = """<!DOCTYPE html>
       } catch (e) {}
     }
 
+    async function trigger433Drill() {
+      const btn = document.getElementById('drill-btn');
+      btn.disabled = true;
+      btn.innerText = 'DRILL ENGAGED!';
+      btn.style.background = '#da3633';
+      try {
+        await fetch('/trigger_433_drill', { method: 'POST' });
+        setTimeout(() => {
+          btn.innerText = 'TRIGGER 433M DRILL';
+          btn.style.background = '#9e6a03';
+          btn.disabled = false;
+        }, 3500);
+      } catch (e) {
+        btn.disabled = false;
+        btn.innerText = 'TRIGGER 433M DRILL';
+        btn.style.background = '#9e6a03';
+      }
+    }
+
     async function toggleWifi() {
       const btn = document.getElementById('toggle-btn');
       btn.disabled = true;
@@ -637,6 +669,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"success": success, "wifi": state}).encode('utf-8'))
+        elif self.path.startswith('/trigger_433_drill'):
+            success = send_com3_cmd("TEST_433\n")
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": success, "drill": "433M"}).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
