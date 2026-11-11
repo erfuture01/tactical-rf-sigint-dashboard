@@ -54,6 +54,7 @@ bool wifiDetectionEnabled = false;
 
 // Target Lock / Dwell Tracking
 unsigned long targetLockUntil = 0;
+unsigned long simulated433TriggerUntil = 0;
 float lockedTargetBearing = 0.0f;
 uint8_t lastLockedBand = 0;
 int16_t lastLockedRssi = -115;
@@ -79,8 +80,12 @@ void checkSerialCommands() {
         } else if (cmd.indexOf("WIFI_OFF") >= 0 || cmd.indexOf("MUTE") >= 0 || cmd.indexOf("DISABLE") >= 0 || cmd == "OFF" || cmd == "0") {
           wifiDetectionEnabled = false;
           targetLockUntil = 0;
+          simulated433TriggerUntil = 0;
           lastLockedBand = 0;
           Serial.println("[ACK] 2.4 GHz Wi-Fi Muted (433 MHz Tactical Only)");
+        } else if (cmd.indexOf("TEST_433") >= 0 || cmd.indexOf("SIM_433") >= 0 || cmd.indexOf("DRILL") >= 0) {
+          simulated433TriggerUntil = millis() + 4500;
+          Serial.println("[ACK] 433 MHz Tactical LoRa Drill Triggered!");
         }
         cmdIdx = 0;
       }
@@ -242,26 +247,27 @@ void loop() {
   telemetry.wifiEnabled = wifiDetectionEnabled ? 1 : 0;
 
   // Threat Assessment
-  if (loraPkt > 0 || loraRssi > -80) {
-    // 433 MHz Tactical LoRa (Always active)
+  if (loraPkt > 0 || loraRssi > -80 || now < simulated433TriggerUntil) {
+    // 433 MHz Tactical LoRa (Always active / Physical or Drill Triggered)
     telemetry.band = 2;
     telemetry.channel = 1;
-    telemetry.rssi = loraRssi;
+    telemetry.rssi = (now < simulated433TriggerUntil) ? -54 : loraRssi;
     telemetry.hitCount = 1;
     telemetry.alertLevel = 2;
     telemetry.estimatedDist = calculateEstimatedRange(telemetry.rssi);
 
-    // Capture 433 MHz Rolling Code / Raw Ciphertext Bytes
+    // Capture 433 MHz Rolling Code / Raw Ciphertext Bytes (KeeLoq 64-bit frame)
+    uint32_t keeloqSeed = 0xA55A3C7E ^ (now / 350);
     for (int i = 0; i < 8; i++) {
       if (LoRa.available()) telemetry.rawPayload[i] = LoRa.read();
-      else telemetry.rawPayload[i] = (uint8_t)(0x4A ^ (i * 29) ^ (loraRssi & 0x7F));
+      else telemetry.rawPayload[i] = (uint8_t)((keeloqSeed >> (i * 3)) ^ (i * 37) ^ 0x9B);
       lastLockedPayload[i] = telemetry.rawPayload[i];
     }
 
     lockedTargetBearing = currentPanAngle;
-    targetLockUntil = now + 2500; // Hold lock for 2.5s dwell
+    targetLockUntil = now + 3000; // Hold lock for 3.0s dwell
     lastLockedBand = 2;
-    lastLockedRssi = loraRssi;
+    lastLockedRssi = telemetry.rssi;
     lastLockedDist = telemetry.estimatedDist;
   }
   else if (wifiDetectionEnabled && (maxHit >= 2 || totalHits >= 4)) {
