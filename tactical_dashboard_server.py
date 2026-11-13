@@ -318,6 +318,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <small style="color: #8b949e;">RF SIGNALS INTELLIGENCE &amp; GEOLOCATION TRACKER</small>
     </div>
     <div>
+      <button id="audio-toggle-btn" class="btn" style="background:#21262d; border:1px solid #30363d; padding:4px 10px; font-size:11px; margin-right:12px; color:#39d353;" onclick="toggleTacticalAudio()">🔊 TACTICAL AUDIO: ON</button>
       UTC: <span id="clock" style="color: #39d353; font-weight: bold;">--:--:--</span> |
       SATELLITES: <span id="sats" style="color: #58a6ff; font-weight: bold;">0</span>
     </div>
@@ -423,6 +424,39 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Tactical Mission Blackbox & Incident Intelligence Log Card -->
+  <div class="card" style="margin-top: 20px;">
+    <div class="card-title">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span>TACTICAL MISSION BLACKBOX // INCIDENT INTELLIGENCE LOG</span>
+        <span id="log-count-badge" style="background: #1f6feb; color: #fff; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: bold;">0 INCIDENTS</span>
+      </div>
+      <div>
+        <button class="btn" style="background: #238636; padding: 6px 14px; font-size: 11px;" onclick="exportIncidentCSV()">📥 EXPORT MISSION REPORT (CSV)</button>
+        <button class="btn" style="background: #21262d; border: 1px solid #30363d; padding: 6px 10px; font-size: 11px; margin-left: 6px;" onclick="clearIncidentLog()">CLEAR LOG</button>
+      </div>
+    </div>
+    <div style="max-height: 220px; overflow-y: auto; border: 1px solid #21262d; border-radius: 6px;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
+        <thead style="background: #161b22; position: sticky; top: 0; color: #8b949e; z-index: 10;">
+          <tr>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">UTC TIME</th>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">THREAT CLASSIFICATION</th>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">BEARING</th>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">EST. RANGE</th>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">RSSI</th>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">TARGET GPS COORDINATES</th>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">RAW HEX PAYLOAD</th>
+            <th style="padding: 8px; border-bottom: 1px solid #30363d;">CIPHERTEXT</th>
+          </tr>
+        </thead>
+        <tbody id="incident-log-body">
+          <tr><td colspan="8" style="padding: 16px; text-align: center; color: #8b949e;">STANDBY // NO INCIDENTS RECORDED IN CURRENT SORTIE</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <script>
     const canvas = document.getElementById('radarCanvas');
     const ctx = canvas.getContext('2d');
@@ -430,6 +464,17 @@ HTML_PAGE = """<!DOCTYPE html>
     let lastAlertTime = 0;
     let lastAlertBearing = 0;
     let lastAlertDist = 50.0;
+
+    // Tactical Web Audio Synthesizer State
+    let audioCtx = null;
+    let audioEnabled = true;
+    let lastSonarPingBearing = 0;
+    let lastAlertAudioTime = 0;
+
+    // Mission Blackbox Incident Logging State
+    const incidentRecords = [];
+    let lastLoggedTime = 0;
+    let lastLoggedPayload = "";
 
     // Leaflet Satellite Map Engine
     let map = null;
@@ -742,6 +787,18 @@ HTML_PAGE = """<!DOCTYPE html>
 
         drawRadar(data.bearing, data.alert, data.dist);
         updateMap(data.bearing, data.alert, data.baseLat, data.baseLon, data.targetLat, data.targetLon, data.dist, data.band);
+
+        // Tactical Audio & Mission Blackbox Integration
+        if (data.alert) {
+          recordIncident(data);
+          playTacticalAlarmKlaxon();
+        } else {
+          // Sonar Ping on 90° center pass
+          if (Math.abs(data.bearing - 90) < 6 && Math.abs(lastSonarPingBearing - 90) >= 6) {
+            playSonarPing();
+          }
+        }
+        lastSonarPingBearing = data.bearing;
       } catch (e) {}
     }
 
@@ -781,6 +838,155 @@ HTML_PAGE = """<!DOCTYPE html>
         console.error("Toggle request failed", e);
         btn.disabled = false;
       }
+    }
+
+    // Web Audio Synthesizer Engine
+    function getAudioContext() {
+      if (!audioCtx) {
+        const AudioClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioClass) audioCtx = new AudioClass();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    function toggleTacticalAudio() {
+      audioEnabled = !audioEnabled;
+      const btn = document.getElementById('audio-toggle-btn');
+      if (audioEnabled) {
+        btn.innerText = '🔊 TACTICAL AUDIO: ON';
+        btn.style.color = '#39d353';
+        getAudioContext();
+        playSonarPing();
+      } else {
+        btn.innerText = '🔇 TACTICAL AUDIO: OFF';
+        btn.style.color = '#8b949e';
+      }
+    }
+
+    function playSonarPing() {
+      if (!audioEnabled) return;
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.35);
+
+        gain.gain.setValueAtTime(0.08, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.36);
+      } catch (e) {}
+    }
+
+    function playTacticalAlarmKlaxon() {
+      if (!audioEnabled) return;
+      const now = Date.now();
+      if (now - lastAlertAudioTime < 550) return;
+      lastAlertAudioTime = now;
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(750, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(1100, ctx.currentTime + 0.12);
+        osc.frequency.linearRampToValueAtTime(750, ctx.currentTime + 0.24);
+
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.29);
+      } catch (e) {}
+    }
+
+    // Mission Blackbox Logging Engine
+    function recordIncident(data) {
+      const now = Date.now();
+      if (now - lastLoggedTime < 2400 && lastLoggedPayload === data.rawHex) return;
+      lastLoggedTime = now;
+      lastLoggedPayload = data.rawHex;
+
+      const record = {
+        utc: data.utc,
+        threat: data.cipherType.replace("STANDBY // SECURE", "UNKNOWN RF BURST"),
+        lob: Math.round(data.bearing) + "°",
+        range: data.dist + "m",
+        rssi: data.rssi + " dBm",
+        gps: `${data.targetLat.toFixed(5)}° N, ${data.targetLon.toFixed(5)}° E`,
+        hex: data.rawHex,
+        cipher: data.ciphertext
+      };
+
+      incidentRecords.unshift(record);
+
+      const tbody = document.getElementById('incident-log-body');
+      if (incidentRecords.length === 1) {
+        tbody.innerHTML = '';
+      }
+
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid #21262d';
+      tr.style.background = 'rgba(218, 54, 51, 0.15)';
+      tr.style.transition = 'background 0.8s';
+      tr.innerHTML = `
+        <td style="padding: 8px; font-weight: bold; color: #58a6ff;">${record.utc}</td>
+        <td style="padding: 8px; font-weight: bold; color: #f85149;">${record.threat}</td>
+        <td style="padding: 8px; color: #e3b341; font-weight: bold;">${record.lob}</td>
+        <td style="padding: 8px;">${record.range}</td>
+        <td style="padding: 8px;">${record.rssi}</td>
+        <td style="padding: 8px; color: #39d353;">${record.gps}</td>
+        <td style="padding: 8px; font-family: monospace; color: #e3b341;">${record.hex}</td>
+        <td style="padding: 8px; font-family: monospace; font-weight: bold; color: #39d353;">${record.cipher}</td>
+      `;
+      tbody.prepend(tr);
+
+      setTimeout(() => {
+        tr.style.background = 'transparent';
+      }, 1500);
+
+      document.getElementById('log-count-badge').innerText = `${incidentRecords.length} INCIDENT${incidentRecords.length > 1 ? 'S' : ''}`;
+    }
+
+    function clearIncidentLog() {
+      incidentRecords.length = 0;
+      document.getElementById('incident-log-body').innerHTML = `
+        <tr><td colspan="8" style="padding: 16px; text-align: center; color: #8b949e;">STANDBY // NO INCIDENTS RECORDED IN CURRENT SORTIE</td></tr>
+      `;
+      document.getElementById('log-count-badge').innerText = '0 INCIDENTS';
+    }
+
+    function exportIncidentCSV() {
+      if (incidentRecords.length === 0) {
+        alert("No incident records available to export. Trigger a threat lock first!");
+        return;
+      }
+      let csv = "UTC Time,Threat Classification,Line-of-Bearing (Azimuth),Estimated Range,Signal Strength (RSSI),Target GPS Coordinates,Raw Hex Payload,Decoded Ciphertext\\n";
+      incidentRecords.forEach(r => {
+        csv += `"${r.utc}","${r.threat}","${r.lob}","${r.range}","${r.rssi}","${r.gps}","${r.hex}","${r.cipher}"\\n`;
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `TACTICAL_SIGINT_MISSION_REPORT_${dateStr}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
 
     setInterval(fetchTelemetry, 100);
