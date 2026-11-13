@@ -61,9 +61,27 @@ int16_t lastLockedRssi = -115;
 float   lastLockedDist = 0.0f;
 uint8_t lastLockedPayload[8] = {0};
 
+// Turret Pan / Tilt Tracking Variables
+float currentPanAngle = 0.0f;
+float panStep = 4.5f;
+const int TILT_LEVELS[] = {35, 55, 75, 55};
+const int NUM_TILT_LEVELS = sizeof(TILT_LEVELS) / sizeof(TILT_LEVELS[0]);
+int tiltIndex = 0;
+int currentTiltAngle = TILT_LEVELS[0];
+
 // Fast Non-Blocking Serial Command Parser
 char cmdBuffer[32];
 uint8_t cmdIdx = 0;
+
+// Manual PTZ Remote Control State
+bool manualControlMode = false;
+float manualPanAngle = 90.0f;
+int manualTiltAngle = 55;
+unsigned long manualModeUntil = 0;
+
+// Electronic Countermeasure (ECM) Jamming State
+bool isJammingActive = false;
+unsigned long jammingUntil = 0;
 
 void checkSerialCommands() {
   while (Serial.available() > 0) {
@@ -86,6 +104,32 @@ void checkSerialCommands() {
         } else if (cmd.indexOf("TEST_433") >= 0 || cmd.indexOf("SIM_433") >= 0 || cmd.indexOf("DRILL") >= 0) {
           simulated433TriggerUntil = millis() + 4500;
           Serial.println("[ACK] 433 MHz Tactical LoRa Drill Triggered!");
+        } else if (cmd.startsWith("PAN:")) {
+          manualControlMode = true;
+          manualModeUntil = millis() + 25000;
+          manualPanAngle = constrain(cmd.substring(4).toFloat(), 0.0f, 180.0f);
+          panServo.write((int)manualPanAngle);
+          currentPanAngle = manualPanAngle;
+          Serial.printf("[PTZ] Manual Pan Slew: %.0f°\n", manualPanAngle);
+        } else if (cmd.startsWith("TILT:")) {
+          manualControlMode = true;
+          manualModeUntil = millis() + 25000;
+          manualTiltAngle = constrain(cmd.substring(5).toInt(), 20, 90);
+          tiltServo.write(manualTiltAngle);
+          currentTiltAngle = manualTiltAngle;
+          Serial.printf("[PTZ] Manual Tilt Slew: %d°\n", manualTiltAngle);
+        } else if (cmd == "AUTO" || cmd == "PATROL") {
+          manualControlMode = false;
+          manualModeUntil = 0;
+          isJammingActive = false;
+          jammingUntil = 0;
+          Serial.println("[PTZ] Resumed Autonomous Surveillance Sweep");
+        } else if (cmd == "JAM_ON" || cmd == "JAM" || cmd == "ECM") {
+          isJammingActive = true;
+          jammingUntil = millis() + 5000;
+          targetLockUntil = millis() + 5000;
+          lockedTargetBearing = currentPanAngle;
+          Serial.println("[ECM] >>> BROADBAND RF JAMMING COUNTERMEASURE ACTIVE <<<");
         }
         cmdIdx = 0;
       }
@@ -102,14 +146,6 @@ float calculateEstimatedRange(int rssi) {
   return constrain(dist, 5.0f, 650.0f);
 }
 
-// Turret Pan / Tilt Parameters (Locked to user's favorite fast, fluid motion)
-float currentPanAngle = 0.0f;
-float panStep = 4.5f;
-
-const int TILT_LEVELS[] = {35, 55, 75, 55};
-const int NUM_TILT_LEVELS = sizeof(TILT_LEVELS) / sizeof(TILT_LEVELS[0]);
-int tiltIndex = 0;
-int currentTiltAngle = TILT_LEVELS[0];
 
 void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {}
 
@@ -186,9 +222,16 @@ void loop() {
   unsigned long now = millis();
 
   // 1. Turret Pan / Tilt Movement
-  if (now < targetLockUntil) {
+  if (now < jammingUntil) {
+    panServo.write((int)lockedTargetBearing);
+  } else if (manualControlMode && now < manualModeUntil) {
+    panServo.write((int)manualPanAngle);
+    tiltServo.write(manualTiltAngle);
+    currentPanAngle = manualPanAngle;
+  } else if (now < targetLockUntil) {
     panServo.write((int)lockedTargetBearing);
   } else {
+    manualControlMode = false;
     currentPanAngle += panStep;
     if (currentPanAngle >= 180.0f) {
       currentPanAngle = 180.0f;
@@ -318,15 +361,27 @@ void loop() {
     memset(telemetry.rawPayload, 0, 8);
   }
 
+  // 4b. Electronic Countermeasure (ECM) Jamming Override
+  if (now < jammingUntil) {
+    telemetry.alertLevel = 3; // 3 = ECM Jamming Active!
+    telemetry.band = (lastLockedBand > 0) ? lastLockedBand : 1;
+    telemetry.hitCount = 99;
+    telemetry.rssi = -32;
+    for (int i = 0; i < 8; i++) {
+      telemetry.rawPayload[i] = 0xEE ^ (i * 0x11);
+      lastLockedPayload[i] = telemetry.rawPayload[i];
+    }
+  }
+
   // 5. Send Telemetry wirelessly to Ground Station HUD
   esp_now_send(node2Address, (uint8_t*)&telemetry, sizeof(telemetry));
   esp_now_send(broadcastAddress, (uint8_t*)&telemetry, sizeof(telemetry));
 
   // Console Telemetry
-  if (packetSeq % 10 == 0 || telemetry.alertLevel == 2) {
+  if (packetSeq % 10 == 0 || telemetry.alertLevel >= 2) {
     Serial.printf("[SIGINT #%u] %s | LOB: %03.0f° | HEX: %02X%02X%02X%02X%02X%02X%02X%02X | Band: %s | WiFiMode: %s | SIG: %ddBm\n",
       telemetry.seq,
-      (telemetry.alertLevel == 2) ? "🚨 HOSTILE" : "PATROL",
+      (now < jammingUntil) ? "⚡ ECM JAMMING" : ((telemetry.alertLevel == 2) ? "🚨 HOSTILE" : "PATROL"),
       telemetry.bearingDeg,
       telemetry.rawPayload[0], telemetry.rawPayload[1], telemetry.rawPayload[2], telemetry.rawPayload[3],
       telemetry.rawPayload[4], telemetry.rawPayload[5], telemetry.rawPayload[6], telemetry.rawPayload[7],
