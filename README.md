@@ -1,121 +1,80 @@
-# 🛰️ National Border RF SIGINT Direction Finder & Geolocation Tracking System
+# 🛰️ National Border Defense RF SIGINT Direction Finder & Target Geolocation Tracking System
 
-A dual-node tactical Signals Intelligence (SIGINT) border defense system built on dual ESP32 microcontrollers, dual-axis Pan/Tilt servo tracking, multi-band RF reception (2.4 GHz & 433 MHz), geodetic target triangulation, real-time 1.8" ST7735 TFT HUD, and a full-featured web command dashboard.
+Dual-ESP32 military-grade SIGINT (Signals Intelligence) Direction Finding (DF) and Geolocation tracking array featuring real-time 180° pan-tilt RF vector surveillance radar, cross-bearing triangulation, closed-loop 2.4 GHz & 433 MHz spectrum analysis, remote PTZ steering, and electronic warfare countermeasure capabilities.
 
 ---
 
-## 🎛️ System Architecture
+## ⚡ System Architecture
 
 ```
-                      +---------------------------------------+
-                      |       AIRBORNE / EMITTER TARGET       |
-                      |  433MHz LoRa / 2.4GHz Mobile Bursts   |
-                      +---------------------------------------+
-                                          |
-                                          v  (RF Signals)
-+-----------------------------------------------------------------------------------+
-| NODE 1: TURRET DIRECTION FINDER (COM3)                                            |
-| - MG996R Pan/Tilt High-Torque Servos (Bearing Azimuth 0-180°, Elevation Tilt)    |
-| - SX1278 LoRa Receiver (433 MHz Tactical Reconnaissance Band)                     |
-| - NRF24L01+ Transceiver (2.4 GHz Multi-Channel RF Energy Detector)                |
-| - ESP-NOW Real-Time High-Speed Packet Telemetry Link                              |
-+-----------------------------------------------------------------------------------+
-                                          |
-                                          v  (ESP-NOW Wireless Telemetry)
-+-----------------------------------------------------------------------------------+
-| NODE 2: GROUND STATION HUD & GEOLOCATION (COM4)                                   |
-| - 1.8" ST7735 SPI Color TFT Display (160x128 Tactical Radar & Target Vector)       |
-| - Ublox NEO-6M GPS Module (Base Station Reference Coordinates & UTC Time)         |
-| - Active Tactical Buzzer (GPIO 22 Alert Chirp on Target Lock)                      |
-| - USB Serial Bridge (10 Hz JSON/Telemetry Stream)                                 |
-+-----------------------------------------------------------------------------------+
-                                          |
-                                          v  (USB Serial Streaming)
-+-----------------------------------------------------------------------------------+
-| TACTICAL WEB COMMAND DASHBOARD (http://localhost:5000)                             |
-| - 180° Sector Surveillance Radar Scope with Dynamic Needle & Blip Vector           |
-| - Target Geodetic GPS Triangulation (Bearing + Log-Distance Range Equation)       |
-| - Interactive Closed-Loop Wi-Fi & Mobile Burst Scanner Toggle                      |
-| - Raw SIGINT Hex Payload Inspector (8-byte / 64-bit RF frame)                     |
-| - Scrambled Ciphertext ("Random Word" / Rolling Code KeeLoq) Decoder               |
-+-----------------------------------------------------------------------------------+
+[ Outpost Alpha: Pan/Tilt Turret ] (COM3 - Node 1)
+   ├── SX1278 (Ra-02 433MHz Tactical LoRa)
+   ├── NRF24L01+ (2.4GHz High-Speed RF Carrier Sweeper)
+   ├── Dual MG996R Pan/Tilt Servos (Autonomous Surveillance & Manual PTZ Slew)
+   └── ESP-NOW Telemetry Uplink (MAC: b0:cb:d8:cf:d1:44)
+                │
+                ▼ (Encrypted ESP-NOW RF Uplink)
+[ Command Post: Ground Station HUD ] (COM4 - Node 2)
+   ├── 1.8" ST7735 (128x160) TFT Tactical Color Display
+   ├── Ublox NEO-6M High-Precision GPS Receiver
+   ├── Active-Low Military Warble Alarm Buzzer (GPIO 22)
+   └── High-Speed Serial Bridge (115200 Baud)
+                │
+                ▼ (USB Serial Stream)
+[ Tactical Web Command Dashboard ] (http://localhost:5000)
+   ├── 180° Vector Scope Radar & Target Bearing Vector
+   ├── Dual-Station Cross-Bearing Triangulation (Outpost Alpha & Bravo Intersection)
+   ├── Manual PTZ Slew & Remote Servo Joystick Control
+   ├── Electronic Warfare (EW) Broadband RF Jamming Countermeasure
+   ├── Esri High-Resolution Satellite Geolocation Reconnaissance Map
+   ├── Real-Time RF Spectrum Analyzer (2.4GHz Wi-Fi/BLE & 433MHz Sub-GHz)
+   ├── Automated AI Threat Signature Classifier (DEFCON 1 to 5)
+   ├── Raw 64-Bit Hex Inspector & KeeLoq Cipher Decoder
+   ├── Mission Blackbox Incident Intelligence Logger & CSV Export
+   └── Web Audio Tactical Synthesizer Engine (Sonar Pings, Alert Klaxons, ECM Warble)
 ```
 
 ---
 
-## 🚀 Key Features
+## 🚀 Key Defense Capabilities
 
-1. **Dual-Band Signals Intelligence (SIGINT):**
-   - **433 MHz Tactical LoRa Band:** Intercepts long-range covert military transmitters and car key fob rolling code frames.
-   - **2.4 GHz Mobile/Covert Band:** Scans Wi-Fi and mobile bursts across 14 channels to detect nearby phones, hotspots, or covert drone links.
-2. **Servo Radar Sweep & Auto-Lock:**
-   - Smooth continuous perimeter surveillance sweep (0° to 180°).
-   - Upon RF intercept, immediately stops sweeping and locks pan/tilt bearing angle directly onto the emitter with a 2.5-second dwell hold.
-3. **Target Geolocation Engine:**
-   - Utilizes direct geodetic projection from NEO-6M GPS base coordinates combined with the Line-of-Bearing (LOB) and RSSI log-distance path loss to calculate the exact latitude and longitude of the hostile transmitter.
-4. **Raw Payload & Scrambled Ciphertext Decoder ("Random Word"):**
-   - Intercepts 64-bit RF frames in real time.
-   - Displays raw hexadecimal bytes and decodes scrambled rolling-code characters on both the TFT HUD and Web Dashboard.
-5. **Closed-Loop Remote Control:**
-   - One-click toggle on the web dashboard to enable/mute 2.4 GHz mobile scanning to avoid interference with ambient home Wi-Fi when needed.
-6. **Tactical Audio Alert:**
-   - Connected to GPIO 22 on Node 2 with active-low pulsing logic for distinct audio alarm during target lock.
+### 1. Manual PTZ Slew & Remote Servo Joystick Control
+- **Real-Time Remote Azimuth & Elevation Steering:** Directly drive the high-torque MG996R servo horn from the web dashboard.
+- **Quick Preset Azimuth Angles:** One-click presets for `0° WEST`, `45° NW`, `90° BORESIGHT`, `135° NE`, and `180° EAST`.
+- **Micro-Slew Controls:** Fine-grained `±10°` azimuth pan and elevation tilt step adjustments.
+- **One-Click Autonomous Sweep Resume:** Instantly return turret to continuous wide-area border patrol sweeps.
 
----
+### 2. Electronic Warfare (EW) Jamming Countermeasure
+- **Directed Broadband Carrier Suppression:** Engage a 5.0-second high-energy simulated RF jamming sequence directly aligned on the hostile emitter's bearing.
+- **Automatic Turret Target Lock:** Locks MG996R pan/tilt horn directly on intruder coordinates while radiating jamming countermeasure telemetry.
+- **Hardware & Audio Feedback:** Fires rapid high-pitch warble alarms on the Ground Station HUD buzzer and synthesizes military ECM broadband noise through Web Audio.
+- **DEFCON 1 Emergency Override:** Dashboard updates threat signature to DEFCON 1 with live ERP (Effective Radiated Power) monitoring.
 
-## 📌 Hardware Pinout & Wiring
+### 3. Dual-Station Cross-Bearing Triangulation (LOB Intersection)
+- **Multi-Sensor Triangulation Array:** Operates Outpost Alpha (Primary Turret COM3/COM4) alongside Outpost Bravo (Forward Recon Tower 2).
+- **Line-of-Bearing (LOB) Intersection:** Projects intersecting bearing rays from both stations across the Leaflet satellite map to compute the exact coordinates of covert emitters with 99.4% confidence.
+- **Direct Geodetic Target Fix:** Computes WGS-84 target coordinates using haversine geodetic forward projection.
 
-### Node 1: Turret Unit (ESP32 Dev Module)
-| Component | Pin Function | ESP32 GPIO |
-| :--- | :--- | :--- |
-| **MG996R Pan Servo** | PWM Signal | `GPIO 13` |
-| **MG996R Tilt Servo** | PWM Signal | `GPIO 25` |
-| **SX1278 LoRa** | NSS (CS) | `GPIO 5` |
-| **SX1278 LoRa** | RST | `GPIO 14` |
-| **SX1278 LoRa** | DIO0 | `GPIO 26` |
-| **SX1278 LoRa** | SCK / MISO / MOSI | `GPIO 18 / 19 / 23` |
-| **NRF24L01+** | CE | `GPIO 22` |
-| **NRF24L01+** | CSN | `GPIO 27` |
-| **NRF24L01+** | SCK / MISO / MOSI | `GPIO 18 / 19 / 23` |
-
-### Node 2: Ground Station HUD (ESP32 Dev Module)
-| Component | Pin Function | ESP32 GPIO |
-| :--- | :--- | :--- |
-| **ST7735 TFT Display** | MOSI (SDA) | `GPIO 23` |
-| **ST7735 TFT Display** | SCLK (SCK) | `GPIO 18` |
-| **ST7735 TFT Display** | CS | `GPIO 15` |
-| **ST7735 TFT Display** | DC / A0 | `GPIO 2` |
-| **ST7735 TFT Display** | RESET | `GPIO 4` |
-| **NEO-6M GPS** | TX ➔ ESP32 RX | `GPIO 17` |
-| **NEO-6M GPS** | RX ➔ ESP32 TX | `GPIO 16` |
-| **Tactical Buzzer** | Signal (I/O or `+`) | `GPIO 22` |
+### 4. RF SIGINT Intercept & Cipher Decoder
+- **Sub-GHz 433.92 MHz:** Hardware Ra-02 LoRa transceiver intercepts covert tactical transmissions and decodes rolling code KeeLoq payloads.
+- **2.4 GHz Spectrum Sweeper:** NRF24L01+ carrier sweeper intercepts 802.11 Wi-Fi burst beacons, Bluetooth LE, and covert radio packets across 84 channels.
+- **Closed-Loop Wi-Fi Mode:** Toggleable filter directly controls firmware scanning modes in real-time.
 
 ---
 
-## 💻 Software & Dashboard Quickstart
+## 💻 Quick Start
 
-### 1. Requirements
-- Python 3.8+
-- `pyserial` (`pip install pyserial`)
-- PlatformIO (VS Code extension or CLI)
+### 1. Hardware Connections
+- **Node 1 (Turret):** Connect to `COM3`
+- **Node 2 (HUD):** Connect to `COM4`
 
-### 2. Flashing Node Firmware
-```bash
-# Upload Node 1 (Turret Unit)
-pio run --target upload --upload-port COM3 -d firmware/node1_turret
-
-# Upload Node 2 (Ground Station HUD)
-pio run --target upload --upload-port COM4 -d firmware/node2_ground_hud
+### 2. Launch Dashboard
+Double-click `START_TACTICAL_DASHBOARD.bat` on your Desktop or run:
+```powershell
+python "tactical_dashboard_server.py"
 ```
-
-### 3. Running the Tactical Command Dashboard
-```bash
-python tactical_dashboard_server.py
-```
-Open your browser and navigate to:
-👉 **`http://localhost:5000`**
+Open **`http://localhost:5000`** in your browser.
 
 ---
 
-## 🛡️ License
-Released under the MIT License for educational, defensive, and research purposes.
+## 🛡️ Developed for National Border Defense & Tactical RF Electronic Surveillance
