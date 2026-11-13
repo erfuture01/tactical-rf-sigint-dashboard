@@ -268,6 +268,8 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <title>Tactical Border SIGINT Command Dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Consolas', 'Courier New', monospace; }
     body { background-color: #06090e; color: #e6edf3; padding: 20px; }
@@ -276,6 +278,11 @@ HTML_PAGE = """<!DOCTYPE html>
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     .card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 18px; }
     .card-title { font-size: 13px; color: #8b949e; letter-spacing: 1.5px; border-bottom: 1px solid #21262d; padding-bottom: 8px; margin-bottom: 14px; display: flex; justify-content: space-between; }
+
+    /* Leaflet Tactical Dark Styling */
+    .leaflet-popup-content-wrapper { background: #0d1117; color: #e6edf3; border: 1px solid #30363d; font-family: 'Consolas', monospace; font-size: 11px; }
+    .leaflet-popup-tip { background: #0d1117; }
+    .leaflet-container { background: #010409; }
     
     /* Radar Canvas */
     .radar-box { display: flex; justify-content: center; align-items: center; position: relative; }
@@ -397,6 +404,25 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Tactical Geolocation Satellite Map Card -->
+  <div class="card" style="margin-top: 20px;">
+    <div class="card-title">
+      <span>TACTICAL BORDER SATELLITE GEOLOCATION MAP</span>
+      <span id="map-status-badge" style="color: #39d353; font-weight: bold;">LIVE GEO-TRACKING // SATELLITE OVERLAY</span>
+    </div>
+    <div id="map" style="width: 100%; height: 380px; border-radius: 6px; border: 1px solid #30363d;"></div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 11px; color: #8b949e;">
+      <div>
+        <span style="color: #39d353; font-weight: bold;">● GREEN:</span> BASE STATION DEFENSE PERIMETER | 
+        <span style="color: #58a6ff; font-weight: bold;">▲ BLUE CONE:</span> TURRET SWEEP BEAM | 
+        <span style="color: #f85149; font-weight: bold;">🎯 RED:</span> HOSTILE EMITTER TARGET
+      </div>
+      <div>
+        MAP ENGINE: Leaflet.js | SATELLITE LAYER: Esri World Imagery &amp; OpenStreetMap
+      </div>
+    </div>
+  </div>
+
   <script>
     const canvas = document.getElementById('radarCanvas');
     const ctx = canvas.getContext('2d');
@@ -404,6 +430,131 @@ HTML_PAGE = """<!DOCTYPE html>
     let lastAlertTime = 0;
     let lastAlertBearing = 0;
     let lastAlertDist = 50.0;
+
+    // Leaflet Satellite Map Engine
+    let map = null;
+    let baseMarker = null;
+    let targetMarker = null;
+    let sweepBeam = null;
+    let targetLine = null;
+    let perimeterCircle = null;
+    let mapInitialized = false;
+
+    function projectPoint(lat, lon, distMeters, bearingDeg) {
+      const rad = bearingDeg * (Math.PI / 180);
+      const dLat = (distMeters * Math.cos(rad)) / 111139.0;
+      const dLon = (distMeters * Math.sin(rad)) / (111139.0 * Math.cos(lat * (Math.PI / 180)));
+      return [lat + dLat, lon + dLon];
+    }
+
+    function initMap(lat, lon) {
+      if (mapInitialized || typeof L === 'undefined') return;
+      try {
+        map = L.map('map', { zoomControl: true }).setView([lat, lon], 17);
+
+        // High-resolution Esri World Imagery (True Satellite View)
+        const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          attribution: 'Esri Satellite Recon',
+          maxZoom: 19
+        }).addTo(map);
+
+        // Tactical Street Map (OSM Fallback)
+        const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap'
+        });
+
+        L.control.layers({ "Satellite View": satLayer, "Tactical Street Map": osmLayer }).addTo(map);
+
+        // Base Station Marker
+        const baseIcon = L.divIcon({
+          className: 'custom-base-icon',
+          html: '<div style="background:#238636; border:2px solid #39d353; width:16px; height:16px; border-radius:50%; box-shadow:0 0 10px #39d353;"></div>',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        });
+
+        baseMarker = L.marker([lat, lon], { icon: baseIcon }).addTo(map)
+          .bindPopup('<b>COMMAND POST // BASE STATION</b><br>Turret Direction Finder Online');
+
+        // Defense Perimeter Circle (100m radius)
+        perimeterCircle = L.circle([lat, lon], {
+          radius: 120,
+          color: '#39d353',
+          fillColor: '#238636',
+          fillOpacity: 0.12,
+          weight: 1.5,
+          dashArray: '4, 4'
+        }).addTo(map);
+
+        // Target Marker (pulsing red)
+        const targetIcon = L.divIcon({
+          className: 'custom-target-icon',
+          html: '<div style="background:#da3633; border:2px solid #ffffff; width:18px; height:18px; border-radius:50%; box-shadow:0 0 15px #f85149; animation: pulse 1s infinite;"></div>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9]
+        });
+        targetMarker = L.marker([lat, lon], { icon: targetIcon });
+
+        // Vector line from Base to Target
+        targetLine = L.polyline([[lat, lon], [lat, lon]], {
+          color: '#e3b341',
+          weight: 2,
+          dashArray: '6, 6'
+        });
+
+        mapInitialized = true;
+      } catch (err) {
+        console.error("Map initialization failed", err);
+      }
+    }
+
+    function updateMap(bearing, isAlert, baseLat, baseLon, targetLat, targetLon, dist, band) {
+      if (!mapInitialized) {
+        initMap(baseLat, baseLon);
+      }
+      if (!map) return;
+
+      // 1. Update Base Marker & Perimeter if GPS drifts
+      if (baseMarker) {
+        baseMarker.setLatLng([baseLat, baseLon]);
+      }
+      if (perimeterCircle) {
+        perimeterCircle.setLatLng([baseLat, baseLon]);
+      }
+
+      // 2. Real-Time Radar Sweep Beam Cone (±8° wide, 140m length)
+      const pLeft = projectPoint(baseLat, baseLon, 140, bearing - 8);
+      const pRight = projectPoint(baseLat, baseLon, 140, bearing + 8);
+      const beamCoords = [[baseLat, baseLon], pLeft, pRight];
+
+      if (!sweepBeam) {
+        sweepBeam = L.polygon(beamCoords, {
+          color: '#58a6ff',
+          fillColor: '#1f6feb',
+          fillOpacity: 0.22,
+          weight: 1
+        }).addTo(map);
+      } else {
+        sweepBeam.setLatLngs(beamCoords);
+      }
+
+      // 3. Target Position & Vector Line
+      const showTarget = isAlert || (Date.now() - lastAlertTime < 2800);
+      if (showTarget) {
+        targetMarker.setLatLng([targetLat, targetLon]);
+        targetMarker.bindPopup(`<b>🚨 HOSTILE EMITTER LOCKED</b><br>Band: ${band}<br>Range: ${dist}m<br>Bearing: ${Math.round(bearing)}°`);
+        if (!map.hasLayer(targetMarker)) {
+          targetMarker.addTo(map);
+        }
+        targetLine.setLatLngs([[baseLat, baseLon], [targetLat, targetLon]]);
+        if (!map.hasLayer(targetLine)) {
+          targetLine.addTo(map);
+        }
+      } else {
+        if (map.hasLayer(targetMarker)) map.removeLayer(targetMarker);
+        if (map.hasLayer(targetLine)) map.removeLayer(targetLine);
+      }
+    }
 
     function drawRadar(bearing, isAlert, dist) {
       const now = Date.now();
@@ -590,6 +741,7 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         drawRadar(data.bearing, data.alert, data.dist);
+        updateMap(data.bearing, data.alert, data.baseLat, data.baseLon, data.targetLat, data.targetLon, data.dist, data.band);
       } catch (e) {}
     }
 
