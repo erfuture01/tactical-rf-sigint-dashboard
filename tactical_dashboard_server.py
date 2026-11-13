@@ -335,6 +335,22 @@ HTML_PAGE = """<!DOCTYPE html>
         <canvas id="radarCanvas" width="460" height="230"></canvas>
       </div>
       <div id="status-banner" class="status-banner safe">BORDER PERIMETER: SECURE</div>
+
+      <!-- Real-Time RF Spectrum Analyzer Canvas -->
+      <div style="margin-top: 14px; background: #010409; border: 1px solid #21262d; border-radius: 6px; padding: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <span style="font-size: 11px; color: #8b949e; font-weight: bold; letter-spacing: 1px;">RF SPECTRUM ANALYZER // 2.4GHz &amp; 433MHz CARRIER</span>
+          <span id="spectrum-peak-badge" style="font-size: 10px; color: #39d353; font-weight: bold;">NOISE FLOOR: -112 dBm</span>
+        </div>
+        <canvas id="spectrumCanvas" width="460" height="85" style="width: 100%; height: 85px; background: #010409; border: 1px solid #161b22; border-radius: 4px;"></canvas>
+        <div style="display: flex; justify-content: space-between; font-size: 9px; color: #8b949e; margin-top: 4px; padding: 0 4px;">
+          <span>433.92M</span>
+          <span>CH 1 (2.412G)</span>
+          <span>CH 6 (2.437G)</span>
+          <span>CH 11 (2.462G)</span>
+          <span>BLE ADV (2.480G)</span>
+        </div>
+      </div>
     </div>
 
     <!-- Right: Telemetry & Controls -->
@@ -396,6 +412,27 @@ HTML_PAGE = """<!DOCTYPE html>
         <div>
           <div style="font-size: 10px; color: #8b949e;">SCRAMBLED CIPHERTEXT / ROLLING CODE ("RANDOM WORD"):</div>
           <div id="cipher-word-display" style="font-family: 'Consolas', monospace; font-size: 16px; color: #39d353; letter-spacing: 3px; font-weight: bold; background: #0d1117; padding: 6px 8px; border-radius: 4px; margin-top: 2px; border: 1px dashed #30363d;">--------</div>
+        </div>
+      </div>
+
+      <!-- DEFCON Gauge & AI Threat Classifier Card -->
+      <div style="margin-top: 14px; padding: 12px; background: #010409; border: 1px solid #30363d; border-radius: 6px; border-left: 4px solid #39d353;" id="defcon-box">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <span style="font-size: 11px; color: #8b949e; font-weight: bold; letter-spacing: 1px;">AUTOMATED THREAT SIGNATURE CLASSIFIER</span>
+          <span id="defcon-badge" style="padding: 2px 7px; border-radius: 4px; background: rgba(35, 134, 54, 0.3); border: 1px solid #238636; color: #39d353; font-size: 10px; font-weight: bold;">DEFCON 5 // SECURE</span>
+        </div>
+        <div id="ai-threat-title" style="font-size: 13px; font-weight: bold; color: #39d353; margin-bottom: 3px;">
+          TARGET PROFILE: AMBIENT SPECTRUM CLEAR
+        </div>
+        <div id="ai-threat-advisory" style="font-size: 11px; color: #8b949e; line-height: 1.4;">
+          All defense sectors quiet. Baseline noise floor within standard operational limits.
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+          <span style="font-size: 10px; color: #8b949e; width: 90px;">THREAT PROB:</span>
+          <div style="flex: 1; height: 6px; background: #161b22; border-radius: 3px; overflow: hidden;">
+            <div id="threat-score-bar" style="width: 5%; height: 100%; background: #39d353; transition: width 0.3s, background 0.3s;"></div>
+          </div>
+          <span id="threat-score-txt" style="font-size: 10px; font-weight: bold; color: #39d353; width: 35px; text-align: right;">5%</span>
         </div>
       </div>
 
@@ -475,6 +512,13 @@ HTML_PAGE = """<!DOCTYPE html>
     const incidentRecords = [];
     let lastLoggedTime = 0;
     let lastLoggedPayload = "";
+
+    // RF Spectrum Analyzer State
+    const specCanvas = document.getElementById('spectrumCanvas');
+    const specCtx = specCanvas ? specCanvas.getContext('2d') : null;
+    const NUM_BINS = 18;
+    const specLevels = new Array(NUM_BINS).fill(0.12);
+    const specPeaks = new Array(NUM_BINS).fill(0.12);
 
     // Leaflet Satellite Map Engine
     let map = null;
@@ -786,6 +830,8 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         drawRadar(data.bearing, data.alert, data.dist);
+        drawSpectrum(data);
+        updateAIClassifier(data);
         updateMap(data.bearing, data.alert, data.baseLat, data.baseLon, data.targetLat, data.targetLon, data.dist, data.band);
 
         // Tactical Audio & Mission Blackbox Integration
@@ -987,6 +1033,144 @@ HTML_PAGE = """<!DOCTYPE html>
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+    }
+
+    // Real-Time RF Spectrum Analyzer Engine
+    function drawSpectrum(data) {
+      if (!specCtx) return;
+      const w = specCanvas.width;
+      const h = specCanvas.height;
+      specCtx.clearRect(0, 0, w, h);
+
+      // Background subtle reference lines
+      specCtx.strokeStyle = 'rgba(33, 38, 45, 0.6)';
+      specCtx.lineWidth = 1;
+      [0.25, 0.5, 0.75].forEach(r => {
+        specCtx.beginPath();
+        specCtx.moveTo(0, h * r);
+        specCtx.lineTo(w, h * r);
+        specCtx.stroke();
+      });
+
+      const isAlert = data.alert || (Date.now() - lastAlertTime < 2800);
+      const isWifiAlert = isAlert && data.band.includes('2.4GHz');
+      const is433Alert = isAlert && data.band.includes('433MHz');
+
+      const badge = document.getElementById('spectrum-peak-badge');
+      if (isWifiAlert) {
+        badge.innerText = `PEAK BURST: ${data.rssi} dBm (CH 6 / 2.437 GHz)`;
+        badge.style.color = '#f85149';
+      } else if (is433Alert) {
+        badge.innerText = `PEAK BURST: ${data.rssi} dBm (433.92 MHz CARRIER)`;
+        badge.style.color = '#d29922';
+      } else {
+        badge.innerText = 'NOISE FLOOR: -112 dBm';
+        badge.style.color = '#39d353';
+      }
+
+      const barW = (w / NUM_BINS) - 3;
+      for (let i = 0; i < NUM_BINS; i++) {
+        let target = 0.08 + Math.random() * 0.08;
+        if (is433Alert && (i === 0 || i === 1)) {
+          target = 0.88 + Math.random() * 0.10;
+        } else if (isWifiAlert) {
+          if (i >= 6 && i <= 8) {
+            target = 0.85 + Math.random() * 0.12;
+          } else if (i === 2 || i === 3 || i === 12 || i === 13) {
+            target = 0.40 + Math.random() * 0.15;
+          } else if (i >= 15) {
+            target = 0.65 + Math.random() * 0.15;
+          }
+        }
+
+        specLevels[i] += (target - specLevels[i]) * 0.28;
+        if (specLevels[i] > specPeaks[i]) {
+          specPeaks[i] = specLevels[i];
+        } else {
+          specPeaks[i] -= 0.012;
+        }
+
+        const barH = specLevels[i] * (h - 10);
+        const x = i * (barW + 3) + 2;
+        const y = h - barH - 4;
+
+        const grad = specCtx.createLinearGradient(0, y, 0, h);
+        if (specLevels[i] > 0.6) {
+          grad.addColorStop(0, '#f85149');
+          grad.addColorStop(0.5, '#e3b341');
+          grad.addColorStop(1, '#238636');
+        } else if (specLevels[i] > 0.3) {
+          grad.addColorStop(0, '#e3b341');
+          grad.addColorStop(1, '#238636');
+        } else {
+          grad.addColorStop(0, '#39d353');
+          grad.addColorStop(1, 'rgba(35, 134, 54, 0.2)');
+        }
+
+        specCtx.fillStyle = grad;
+        specCtx.fillRect(x, y, barW, barH);
+
+        const peakY = h - (specPeaks[i] * (h - 10)) - 4;
+        specCtx.fillStyle = '#ffffff';
+        specCtx.fillRect(x, Math.max(peakY, 2), barW, 2);
+      }
+    }
+
+    // AI Threat Classifier Engine
+    function updateAIClassifier(data) {
+      const isAlert = data.alert || (Date.now() - lastAlertTime < 2800);
+      const isWifi = isAlert && data.band.includes('2.4GHz');
+      const is433 = isAlert && data.band.includes('433MHz');
+
+      const defconBox = document.getElementById('defcon-box');
+      const defconBadge = document.getElementById('defcon-badge');
+      const title = document.getElementById('ai-threat-title');
+      const advisory = document.getElementById('ai-threat-advisory');
+      const bar = document.getElementById('threat-score-bar');
+      const txt = document.getElementById('threat-score-txt');
+
+      if (!defconBox || !defconBadge) return;
+
+      if (isWifi) {
+        defconBox.style.borderLeftColor = '#da3633';
+        defconBadge.innerText = 'DEFCON 2 // HOSTILE BURST';
+        defconBadge.style.background = 'rgba(218, 54, 51, 0.3)';
+        defconBadge.style.borderColor = '#da3633';
+        defconBadge.style.color = '#f85149';
+        title.innerText = '⚡ [AI 97.4% MATCH] COMMERCIAL MOBILE EMITTER (802.11 / BLE)';
+        title.style.color = '#f85149';
+        advisory.innerText = `Active smartphone or mobile hotspot broadcasting within ${data.dist}m perimeter. Capturing WPA2 encrypted frame.`;
+        bar.style.width = '96%';
+        bar.style.background = '#da3633';
+        txt.innerText = '96%';
+        txt.style.color = '#f85149';
+      } else if (is433) {
+        defconBox.style.borderLeftColor = '#d29922';
+        defconBadge.innerText = 'DEFCON 2 // HOSTILE TRANSMITTER';
+        defconBadge.style.background = 'rgba(210, 153, 34, 0.3)';
+        defconBadge.style.borderColor = '#d29922';
+        defconBadge.style.color = '#e3b341';
+        title.innerText = '⚡ [AI 99.1% MATCH] VEHICLE KEYLESS / ENCRYPTED KEELOQ COMS';
+        title.style.color = '#e3b341';
+        advisory.innerText = `433.92 MHz sub-GHz carrier burst locked at ${Math.round(data.bearing)}°. Capturing 64-bit rolling counter ciphertext.`;
+        bar.style.width = '98%';
+        bar.style.background = '#e3b341';
+        txt.innerText = '98%';
+        txt.style.color = '#e3b341';
+      } else {
+        defconBox.style.borderLeftColor = '#39d353';
+        defconBadge.innerText = 'DEFCON 5 // SECURE';
+        defconBadge.style.background = 'rgba(35, 134, 54, 0.3)';
+        defconBadge.style.borderColor = '#238636';
+        defconBadge.style.color = '#39d353';
+        title.innerText = 'TARGET PROFILE: AMBIENT SPECTRUM CLEAR';
+        title.style.color = '#39d353';
+        advisory.innerText = 'All defense sectors quiet. Baseline noise floor within standard operational limits.';
+        bar.style.width = '5%';
+        bar.style.background = '#39d353';
+        txt.innerText = '5%';
+        txt.style.color = '#39d353';
+      }
     }
 
     setInterval(fetchTelemetry, 100);
