@@ -267,6 +267,9 @@ void loop() {
     if (!linkAlive) {
       tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
       tft.drawString("OFFLINE", 110, 18, 1);
+    } else if (localPkt.alertLevel == 3) {
+      tft.setTextColor(TFT_MAGENTA, TFT_BLACK);
+      tft.drawString("ECM JAM", 110, 18, 1);
     } else if (isHostile) {
       tft.setTextColor(TFT_RED, TFT_BLACK);
       tft.drawString("HOSTILE", 110, 18, 1);
@@ -348,6 +351,7 @@ void loop() {
 
     // 6. Bottom Border Defense Status Banner (y: 114 - 127)
     uint16_t statusBg = (!linkAlive) ? TFT_MAROON :
+                        (localPkt.alertLevel == 3) ? TFT_MAGENTA :
                         isHostile ? TFT_RED : TFT_DARKGREEN;
 
     tft.fillRect(0, 114, 160, 14, statusBg);
@@ -355,6 +359,8 @@ void loop() {
 
     if (!linkAlive) {
       tft.drawCentreString("LINK: OFFLINE", 80, 116, 1);
+    } else if (localPkt.alertLevel == 3) {
+      tft.drawCentreString("! ECM JAMMER ACTIVE !", 80, 116, 1);
     } else if (isHostile) {
       tft.drawCentreString("! INTRUDER COMMS LOCKED !", 80, 116, 1);
     } else if (localPkt.wifiEnabled == 1) {
@@ -368,13 +374,13 @@ void loop() {
   if (millis() - lastDiagTime >= 100) {
     lastDiagTime = millis();
     int sats = gps.satellites.isValid() ? gps.satellites.value() : 0;
-    bool isHostile = (rxPacket.alertLevel == 2);
+    bool isHostile = (rxPacket.alertLevel >= 2);
     char hexWord[20];
     snprintf(hexWord, sizeof(hexWord), "%02X%02X%02X%02X%02X%02X%02X%02X",
       rxPacket.rawPayload[0], rxPacket.rawPayload[1], rxPacket.rawPayload[2], rxPacket.rawPayload[3],
       rxPacket.rawPayload[4], rxPacket.rawPayload[5], rxPacket.rawPayload[6], rxPacket.rawPayload[7]);
     Serial.printf("[BORDER SEC HUD] %s | Alert: %d | LOB: %03.0f° | Band: %d | Dist: %.1f | HEX: %s | WiFiMode: %d | RSSI: %ddBm | Sats: %d | BaseLat: %.4f\n",
-      isHostile ? "TARGET LOCKED" : "PERIMETER PATROL",
+      (rxPacket.alertLevel == 3) ? "ECM JAMMER ACTIVE" : (isHostile ? "TARGET LOCKED" : "PERIMETER PATROL"),
       rxPacket.alertLevel,
       rxPacket.bearingDeg, rxPacket.band, rxPacket.estimatedDist,
       hexWord,
@@ -385,9 +391,11 @@ void loop() {
   // Tactical Alert Buzzer Pulse (GPIO 22 - Inverted for Active-Low Modules)
   static unsigned long lastBuzzerToggle = 0;
   static bool buzzerActive = false;
-  bool isAlert = (millis() - lastPacketTime <= 2500) && (rxPacket.alertLevel == 2);
+  bool isJamming = (millis() - lastPacketTime <= 2500) && (rxPacket.alertLevel == 3);
+  bool isAlert = (millis() - lastPacketTime <= 2500) && (rxPacket.alertLevel >= 2);
   if (isAlert) {
-    if (millis() - lastBuzzerToggle >= 120) {
+    unsigned long interval = isJamming ? 50 : 120; // Fast military warble for ECM jamming
+    if (millis() - lastBuzzerToggle >= interval) {
       lastBuzzerToggle = millis();
       buzzerActive = !buzzerActive;
       if (buzzerActive) {
