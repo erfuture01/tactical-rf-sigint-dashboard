@@ -428,11 +428,11 @@ HTML_PAGE = """<!DOCTYPE html>
           All defense sectors quiet. Baseline noise floor within standard operational limits.
         </div>
         <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
-          <span style="font-size: 10px; color: #8b949e; width: 90px;">THREAT PROB:</span>
+          <span style="font-size: 10px; color: #8b949e; width: 120px;">DEFENSE INTEGRITY:</span>
           <div style="flex: 1; height: 6px; background: #161b22; border-radius: 3px; overflow: hidden;">
-            <div id="threat-score-bar" style="width: 5%; height: 100%; background: #39d353; transition: width 0.3s, background 0.3s;"></div>
+            <div id="threat-score-bar" style="width: 100%; height: 100%; background: #39d353; transition: width 0.3s, background 0.3s;"></div>
           </div>
-          <span id="threat-score-txt" style="font-size: 10px; font-weight: bold; color: #39d353; width: 35px; text-align: right;">5%</span>
+          <span id="threat-score-txt" style="font-size: 10px; font-weight: bold; color: #39d353; width: 50px; text-align: right;">100%</span>
         </div>
       </div>
 
@@ -1116,7 +1116,7 @@ HTML_PAGE = """<!DOCTYPE html>
       }
     }
 
-    // AI Threat Classifier Engine
+    // AI Threat Classifier Engine (Reversed Defense Integrity Metrics)
     function updateAIClassifier(data) {
       const isAlert = data.alert || (Date.now() - lastAlertTime < 2800);
       const isWifi = isAlert && data.band.includes('2.4GHz');
@@ -1133,42 +1133,42 @@ HTML_PAGE = """<!DOCTYPE html>
 
       if (isWifi) {
         defconBox.style.borderLeftColor = '#da3633';
-        defconBadge.innerText = 'DEFCON 2 // HOSTILE BURST';
+        defconBadge.innerText = 'DEFCON 2 // BORDER INTRUSION';
         defconBadge.style.background = 'rgba(218, 54, 51, 0.3)';
         defconBadge.style.borderColor = '#da3633';
         defconBadge.style.color = '#f85149';
-        title.innerText = '⚡ [AI 97.4% MATCH] COMMERCIAL MOBILE EMITTER (802.11 / BLE)';
+        title.innerText = '⚡ [AI 97.4% THREAT MATCH] COVERT 2.4 GHz EMITTER BURST';
         title.style.color = '#f85149';
-        advisory.innerText = `Active smartphone or mobile hotspot broadcasting within ${data.dist}m perimeter. Capturing WPA2 encrypted frame.`;
-        bar.style.width = '96%';
+        advisory.innerText = `Hostile radio emitter active within ${data.dist}m perimeter. Defense integrity compromised. Intercepting raw WPA2 frame.`;
+        bar.style.width = '4%';
         bar.style.background = '#da3633';
-        txt.innerText = '96%';
+        txt.innerText = '4%';
         txt.style.color = '#f85149';
       } else if (is433) {
         defconBox.style.borderLeftColor = '#d29922';
-        defconBadge.innerText = 'DEFCON 2 // HOSTILE TRANSMITTER';
+        defconBadge.innerText = 'DEFCON 2 // COVERT TRANSMISSION';
         defconBadge.style.background = 'rgba(210, 153, 34, 0.3)';
         defconBadge.style.borderColor = '#d29922';
         defconBadge.style.color = '#e3b341';
-        title.innerText = '⚡ [AI 99.1% MATCH] VEHICLE KEYLESS / ENCRYPTED KEELOQ COMS';
+        title.innerText = '⚡ [AI 99.1% THREAT MATCH] 433 MHz TACTICAL ROLLING-CODE TRANSMITTER';
         title.style.color = '#e3b341';
-        advisory.innerText = `433.92 MHz sub-GHz carrier burst locked at ${Math.round(data.bearing)}°. Capturing 64-bit rolling counter ciphertext.`;
-        bar.style.width = '98%';
-        bar.style.background = '#e3b341';
-        txt.innerText = '98%';
-        txt.style.color = '#e3b341';
+        advisory.innerText = `433.92 MHz sub-GHz transmission locked at ${Math.round(data.bearing)}°. Defense integrity compromised. Decrypting KeeLoq counter.`;
+        bar.style.width = '2%';
+        bar.style.background = '#d29922';
+        txt.innerText = '2%';
+        txt.style.color = '#d29922';
       } else {
         defconBox.style.borderLeftColor = '#39d353';
-        defconBadge.innerText = 'DEFCON 5 // SECURE';
+        defconBadge.innerText = 'DEFCON 5 // 100% SECURE';
         defconBadge.style.background = 'rgba(35, 134, 54, 0.3)';
         defconBadge.style.borderColor = '#238636';
         defconBadge.style.color = '#39d353';
-        title.innerText = 'TARGET PROFILE: AMBIENT SPECTRUM CLEAR';
+        title.innerText = 'BORDER DEFENSE INTEGRITY: 100% SECURE';
         title.style.color = '#39d353';
-        advisory.innerText = 'All defense sectors quiet. Baseline noise floor within standard operational limits.';
-        bar.style.width = '5%';
+        advisory.innerText = 'All defense sectors clear. Baseline noise floor within standard operational limits. Zero border incursions detected.';
+        bar.style.width = '100%';
         bar.style.background = '#39d353';
-        txt.innerText = '5%';
+        txt.innerText = '100%';
         txt.style.color = '#39d353';
       }
     }
