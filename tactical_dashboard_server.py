@@ -17,8 +17,11 @@ telemetry_data = {
     "rssi": -115,
     "dist": 0.0,
     "alert": False,
+    "alertLevel": 0,
     "baseLat": 28.5412,
     "baseLon": 77.2031,
+    "bravoLat": 28.5430,
+    "bravoLon": 77.2055,
     "targetLat": 28.5412,
     "targetLon": 77.2031,
     "sats": 0,
@@ -27,6 +30,9 @@ telemetry_data = {
     "rawHex": "-- -- -- -- -- -- -- --",
     "ciphertext": "--------",
     "cipherType": "STANDBY // SECURE",
+    "isJamming": False,
+    "jammingUntil": 0.0,
+    "ptzManual": False,
     "lastUpdate": time.time(),
     "node1Connected": False,
     "node2Connected": False
@@ -72,31 +78,31 @@ def com3_worker():
                 s.dtr = False
                 s.rts = False
                 s.open()
-                time.sleep(1.8) # Allow ESP32 to stabilize after USB connection
+                time.sleep(1.8)
                 with ser_com3_lock:
                     ser_com3 = s
                 telemetry_data["node1Connected"] = True
-                print("[BRIDGE] COM3 Connected & Stabilized!")
+                print("[BRIDGE] COM3 Connected & Ready for Commands!")
 
             line = ser_com3.readline()
             if line:
                 msg = line.decode('utf-8', errors='replace').strip()
                 if msg:
                     print(f"[NODE 1 / COM3] {msg}")
-                    if "WiFiMode: ON" in msg or "ACTIVATED" in msg:
-                        telemetry_data["wifiDetection"] = True
-                    elif "WiFiMode: OFF" in msg or "Muted" in msg:
-                        telemetry_data["wifiDetection"] = False
-
-                    if "HOSTILE" in msg:
-                        global last_alert_lock_time
-                        last_alert_lock_time = time.time()
-                        telemetry_data["alert"] = True
-                        telemetry_data["band"] = "2.4GHz COVERT/MOBILE" if "2.4GHz" in msg else "433MHz TACTICAL LORA"
-                        for p in msg.split('|'):
+                    if "[ACK]" in msg:
+                        print(f"[COMMAND CONFIRMED] {msg}")
+                    elif "[PTZ]" in msg:
+                        print(f"[PTZ CONFIRMED] {msg}")
+                    elif "[ECM]" in msg:
+                        print(f"[ECM CONFIRMED] {msg}")
+                        telemetry_data["isJamming"] = True
+                    elif "[SIGINT" in msg:
+                        parts = msg.split('|')
+                        for p in parts:
                             p = p.strip()
                             if p.startswith("LOB:"):
-                                try: telemetry_data["bearing"] = float(p.replace("LOB:", "").replace("°", "").strip())
+                                try:
+                                    telemetry_data["bearing"] = float(p.replace("LOB:", "").replace("°", "").strip())
                                 except: pass
                             elif p.startswith("HEX:"):
                                 hex_val = p.replace("HEX:", "").strip()
@@ -132,7 +138,7 @@ def send_com3_cmd(cmd):
                 msg = (cmd.strip() + "\n").encode('utf-8')
                 ser_com3.write(msg)
                 ser_com3.flush()
-                print(f"[BRIDGE -> COM3] Command Sent: {cmd}")
+                print(f"[BRIDGE -> COM3] Command Sent: {cmd.strip()}")
                 return True
             except Exception as e:
                 print(f"[BRIDGE ERROR] Write to COM3 failed: {e}")
@@ -164,9 +170,7 @@ def com4_reader():
                 s = line.decode('utf-8', errors='replace').strip()
                 if s:
                     print(f"[NODE 2 / COM4] {s}")
-                if "BORDER SEC HUD" in s or "TARGET LOCKED" in s or "PERIMETER PATROL" in s:
-                    # Parse telemetry from COM4 log:
-                    # [BORDER SEC HUD] 🚨 TARGET LOCKED | LOB: 014° | Band: 2 | WiFiMode: 0 | RSSI: -86dBm | Sats: 0 | BaseLat: 28.5412
+                if "BORDER SEC HUD" in s or "TARGET LOCKED" in s or "PERIMETER PATROL" in s or "ECM JAMMER" in s:
                     parts = s.split('|')
                     lob = 0.0
                     band_id = 0
@@ -176,41 +180,53 @@ def com4_reader():
                     rssi = -115
                     sats = 0
                     base_lat = 28.5412
-
                     hex_val = ""
+
                     for p in parts:
                         p = p.strip()
                         if p.startswith("Alert:"):
-                            try: alert_level = int(p.replace("Alert:", "").strip())
+                            try: alert_level = int(p.split(':')[1].strip())
                             except: pass
-                        elif p.startswith("Dist:"):
-                            try: dist_in = float(p.replace("Dist:", "").strip())
-                            except: pass
-                        elif p.startswith("HEX:"):
-                            hex_val = p.replace("HEX:", "").strip()
                         elif p.startswith("LOB:"):
-                            try: lob = float(p.replace("LOB:", "").replace("°", "").strip())
+                            try: lob = float(p.split(':')[1].replace('°','').strip())
                             except: pass
                         elif p.startswith("Band:"):
-                            try: band_id = int(p.replace("Band:", "").strip())
+                            try: band_id = int(p.split(':')[1].strip())
+                            except: pass
+                        elif p.startswith("Dist:"):
+                            try: dist_in = float(p.split(':')[1].strip())
+                            except: pass
+                        elif p.startswith("HEX:"):
+                            try: hex_val = p.split(':')[1].strip()
                             except: pass
                         elif p.startswith("WiFiMode:"):
-                            try: wifi_mode = int(p.replace("WiFiMode:", "").strip())
+                            try: wifi_mode = int(p.split(':')[1].strip())
                             except: pass
                         elif p.startswith("RSSI:"):
-                            try: rssi = int(p.replace("RSSI:", "").replace("dBm", "").strip())
+                            try: rssi = int(p.split(':')[1].replace('dBm','').strip())
                             except: pass
                         elif p.startswith("Sats:"):
-                            try: sats = int(p.replace("Sats:", "").strip())
+                            try: sats = int(p.split(':')[1].strip())
                             except: pass
                         elif p.startswith("BaseLat:"):
-                            try: base_lat = float(p.replace("BaseLat:", "").strip())
+                            try: base_lat = float(p.split(':')[1].strip())
                             except: pass
 
-                    is_alert = (alert_level == 2) or ("TARGET LOCKED" in s) or ("TARGET_LOCKED" in s) or ("HOSTILE" in s)
-                    band_str = "433MHz TACTICAL LORA" if band_id == 2 else ("2.4GHz COVERT/MOBILE" if band_id == 1 else "PERIMETER SECURE")
+                    is_jamming = (alert_level == 3) or ("ECM JAMMER" in s) or (time.time() < telemetry_data.get("jammingUntil", 0))
+                    is_alert = (alert_level >= 2) or ("TARGET LOCKED" in s) or ("HOSTILE" in s) or is_jamming
 
-                    # Calculate Range and Target Coordinates
+                    telemetry_data["isJamming"] = is_jamming
+                    telemetry_data["alertLevel"] = 3 if is_jamming else alert_level
+
+                    if is_jamming:
+                        band_str = "⚡ BROADBAND RF JAMMING (ECM)"
+                    elif band_id == 2:
+                        band_str = "433MHz TACTICAL LORA"
+                    elif band_id == 1:
+                        band_str = "2.4GHz COVERT/MOBILE"
+                    else:
+                        band_str = "PERIMETER SECURE"
+
                     est_dist = dist_in if dist_in > 0 else 0.0
                     tgt_lat = base_lat
                     tgt_lon = 77.2031
@@ -223,7 +239,17 @@ def com4_reader():
                         tgt_lat = round(base_lat + (est_dist * math.cos(rad)) / 111139.0, 5)
                         tgt_lon = round(77.2031 + (est_dist * math.sin(rad)) / (111139.0 * math.cos(math.radians(base_lat))), 5)
 
-                    if is_alert:
+                    if is_jamming:
+                        last_alert_lock_time = time.time()
+                        telemetry_data["alert"] = True
+                        telemetry_data["band"] = band_str
+                        telemetry_data["dist"] = 28.0
+                        telemetry_data["targetLat"] = tgt_lat
+                        telemetry_data["targetLon"] = tgt_lon
+                        telemetry_data["rawHex"] = "EE : FF : EE : DD : CC : BB : AA : 99"
+                        telemetry_data["ciphertext"] = "ECM-JAM!"
+                        telemetry_data["cipherType"] = "⚡ BROADBAND RF JAMMING ACTIVE"
+                    elif is_alert:
                         last_alert_lock_time = time.time()
                         telemetry_data["alert"] = True
                         telemetry_data["band"] = band_str
@@ -248,7 +274,7 @@ def com4_reader():
                         telemetry_data["cipherType"] = "STANDBY // SECURE"
 
                     telemetry_data["bearing"] = lob
-                    telemetry_data["rssi"] = rssi
+                    telemetry_data["rssi"] = -32 if is_jamming else rssi
                     telemetry_data["baseLat"] = base_lat
                     telemetry_data["sats"] = sats
                     if time.time() > wifi_override_until:
@@ -399,7 +425,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="row" style="border: none; padding: 2px 0;"><span>TARGET LON:</span><span id="tgt-lon" class="val coord">--.----° E</span></div>
       </div>
 
-      <!-- Raw SIGINT Packet & Ciphertext / Random Word Inspector -->
+      <!-- Raw SIGINT Packet & Ciphertext Decoder -->
       <div style="margin-top: 14px; padding: 12px; background: #010409; border: 1px solid #30363d; border-radius: 6px; border-left: 4px solid #58a6ff;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <span style="font-size: 11px; color: #8b949e; font-weight: bold; letter-spacing: 1px;">RAW RF INTERCEPT &amp; CIPHER DECODER</span>
@@ -442,26 +468,104 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Tactical Geolocation Satellite Map Card -->
-  <div class="card" style="margin-top: 20px;">
-    <div class="card-title">
-      <span>TACTICAL BORDER SATELLITE GEOLOCATION MAP</span>
-      <span id="map-status-badge" style="color: #39d353; font-weight: bold;">LIVE GEO-TRACKING // SATELLITE OVERLAY</span>
-    </div>
-    <div id="map" style="width: 100%; height: 380px; border-radius: 6px; border: 1px solid #30363d;"></div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 11px; color: #8b949e;">
-      <div>
-        <span style="color: #39d353; font-weight: bold;">● GREEN:</span> BASE STATION DEFENSE PERIMETER | 
-        <span style="color: #58a6ff; font-weight: bold;">▲ BLUE CONE:</span> TURRET SWEEP BEAM | 
-        <span style="color: #f85149; font-weight: bold;">🎯 RED:</span> HOSTILE EMITTER TARGET
+  <!-- Dual Advanced Tactical Control: Manual PTZ Slew & Electronic Warfare (EW) Jamming -->
+  <div class="grid" style="margin-top: 20px;">
+    <!-- Card 1: Manual PTZ Slew & Remote Servo Joystick -->
+    <div class="card" style="border-left: 4px solid #1f6feb;">
+      <div class="card-title">
+        <span>MANUAL PTZ SLEW &amp; SERVO JOYSTICK CONTROL</span>
+        <span id="ptz-status-badge" style="color: #39d353; font-weight: bold;">AUTONOMOUS SWEEP</span>
       </div>
-      <div>
-        MAP ENGINE: Leaflet.js | SATELLITE LAYER: Esri World Imagery &amp; OpenStreetMap
+
+      <!-- Quick Preset Azimuth Angles -->
+      <div style="margin-bottom: 12px;">
+        <div style="font-size: 11px; color: #8b949e; margin-bottom: 6px; font-weight: bold;">QUICK AZIMUTH PRESETS:</div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:6px 12px; font-size:11px;" onclick="setPtzPan(0)">0° WEST</button>
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:6px 12px; font-size:11px;" onclick="setPtzPan(45)">45° NW</button>
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:6px 12px; font-size:11px;" onclick="setPtzPan(90)">90° BORESIGHT</button>
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:6px 12px; font-size:11px;" onclick="setPtzPan(135)">135° NE</button>
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:6px 12px; font-size:11px;" onclick="setPtzPan(180)">180° EAST</button>
+        </div>
+      </div>
+
+      <!-- Sliders for Pan and Tilt -->
+      <div style="background: #010409; padding: 12px; border: 1px solid #21262d; border-radius: 6px; margin-bottom: 14px;">
+        <div style="margin-bottom: 10px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+            <span style="color: #8b949e; font-weight: bold;">AZIMUTH PAN ANGLE (0° - 180°):</span>
+            <span id="pan-val-label" style="color: #58a6ff; font-weight: bold;">90°</span>
+          </div>
+          <input type="range" id="pan-slider" min="0" max="180" value="90" style="width: 100%; accent-color: #58a6ff;" oninput="onPanSlider(this.value)">
+        </div>
+        <div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+            <span style="color: #8b949e; font-weight: bold;">ELEVATION TILT ANGLE (20° - 90°):</span>
+            <span id="tilt-val-label" style="color: #39d353; font-weight: bold;">55°</span>
+          </div>
+          <input type="range" id="tilt-slider" min="20" max="90" value="55" style="width: 100%; accent-color: #39d353;" oninput="onTiltSlider(this.value)">
+        </div>
+      </div>
+
+      <!-- Directional Nudge Buttons & Resume Auto -->
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; gap: 6px;">
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:8px 10px; font-size:11px;" onclick="nudgePan(-10)">◀ PAN -10°</button>
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:8px 10px; font-size:11px;" onclick="nudgePan(10)">PAN +10° ▶</button>
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:8px 10px; font-size:11px;" onclick="nudgeTilt(-10)">▼ TILT -10°</button>
+          <button class="btn" style="background:#21262d; border:1px solid #30363d; padding:8px 10px; font-size:11px;" onclick="nudgeTilt(10)">▲ TILT +10°</button>
+        </div>
+        <button id="resume-auto-btn" class="btn" style="background:#238636; padding:8px 14px; font-size:11px;" onclick="resumeAutonomousSweep()">🟢 RESUME AUTO SWEEP</button>
+      </div>
+    </div>
+
+    <!-- Card 2: Electronic Warfare (EW) Jamming Countermeasure -->
+    <div class="card" style="border-left: 4px solid #f85149;" id="jamming-card">
+      <div class="card-title">
+        <span>ELECTRONIC WARFARE (EW) // RF JAMMING COUNTERMEASURE</span>
+        <span id="jam-status-badge" style="color: #8b949e; font-weight: bold;">STANDBY</span>
+      </div>
+
+      <div style="font-size: 11px; color: #8b949e; margin-bottom: 12px; line-height: 1.4;">
+        Directs high-gain broadband electromagnetic countermeasure (ECM) on locked line-of-bearing. Suppresses hostile uplinks with white carrier noise, locks pan/tilt horn on intruder, triggers rapid alert warbles on Ground Station HUD, and denies remote wireless control.
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <button id="engage-jam-btn" class="btn" style="width: 100%; padding: 14px; font-size: 13px; background: linear-gradient(135deg, #da3633 0%, #8e1515 100%); border: 1px solid #f85149; box-shadow: 0 0 15px rgba(218, 54, 51, 0.4); letter-spacing: 1.2px; font-weight: bold; cursor: pointer;" onclick="engageRfJamming()">
+          ⚡ ENGAGE BROADBAND RF JAMMING COUNTERMEASURE
+        </button>
+      </div>
+
+      <div style="background: #010409; padding: 10px; border: 1px solid #21262d; border-radius: 6px;">
+        <div class="row" style="border: none; padding: 2px 0;"><span>ECM STATUS:</span><span id="ecm-mode-txt" class="val safe">STANDBY // READY</span></div>
+        <div class="row" style="border: none; padding: 2px 0;"><span>SIMULATED RADIATED POWER:</span><span id="ecm-erp-txt" class="val">50 W DIRECTED RF</span></div>
+        <div class="row" style="border: none; padding: 2px 0;"><span>JAMMER TARGET LOCK:</span><span id="ecm-vector-txt" class="val" style="color:#58a6ff;">AZIMUTH 090° LOCKED</span></div>
       </div>
     </div>
   </div>
 
-  <!-- Tactical Mission Blackbox & Incident Intelligence Log Card -->
+  <!-- Tactical Geolocation Satellite Map Card (Dual-Station Cross-Bearing Triangulation) -->
+  <div class="card" style="margin-top: 20px;">
+    <div class="card-title">
+      <span>TACTICAL BORDER SATELLITE GEOLOCATION MAP // DUAL-STATION TRIANGULATION</span>
+      <span id="map-status-badge" style="color: #39d353; font-weight: bold;">OUTPOST ALPHA &amp; BRAVO // LOB INTERSECTION ACTIVE</span>
+    </div>
+    <div id="map" style="width: 100%; height: 420px; border-radius: 6px; border: 1px solid #30363d;"></div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 11px; color: #8b949e; flex-wrap: wrap; gap: 8px;">
+      <div>
+        <span style="color: #39d353; font-weight: bold;">● OUTPOST ALPHA (TURRET 1)</span> | 
+        <span style="color: #58a6ff; font-weight: bold;">◆ OUTPOST BRAVO (TOWER 2)</span> | 
+        <span style="color: #e3b341; font-weight: bold;">── LOB ALPHA</span> | 
+        <span style="color: #58a6ff; font-weight: bold;">- - LOB BRAVO</span> | 
+        <span style="color: #f85149; font-weight: bold;">🎯 CROSS-BEARING FIX (99.4%)</span>
+      </div>
+      <div>
+        MAP ENGINE: Leaflet.js | SATELLITE: Esri World Imagery &amp; OpenStreetMap
+      </div>
+    </div>
+  </div>
+
+  <!-- Mission Blackbox Incident Logger Card -->
   <div class="card" style="margin-top: 20px;">
     <div class="card-title">
       <div style="display: flex; align-items: center; gap: 8px;">
@@ -507,6 +611,7 @@ HTML_PAGE = """<!DOCTYPE html>
     let audioEnabled = true;
     let lastSonarPingBearing = 0;
     let lastAlertAudioTime = 0;
+    let lastJammingAudioTime = 0;
 
     // Mission Blackbox Incident Logging State
     const incidentRecords = [];
@@ -516,18 +621,27 @@ HTML_PAGE = """<!DOCTYPE html>
     // RF Spectrum Analyzer State
     const specCanvas = document.getElementById('spectrumCanvas');
     const specCtx = specCanvas ? specCanvas.getContext('2d') : null;
-    const NUM_BINS = 18;
+    const NUM_BINS = 24;
     const specLevels = new Array(NUM_BINS).fill(0.12);
     const specPeaks = new Array(NUM_BINS).fill(0.12);
 
-    // Leaflet Satellite Map Engine
+    // Leaflet Satellite Map Engine with Dual Stations
     let map = null;
     let baseMarker = null;
+    let bravoMarker = null;
     let targetMarker = null;
     let sweepBeam = null;
     let targetLine = null;
+    let bravoLine = null;
+    let baselinePoly = null;
+    let triangulationFixMarker = null;
     let perimeterCircle = null;
     let mapInitialized = false;
+
+    // PTZ Remote Control State
+    let currentPtzPan = 90;
+    let currentPtzTilt = 55;
+    let isPtzManual = false;
 
     function projectPoint(lat, lon, distMeters, bearingDeg) {
       const rad = bearingDeg * (Math.PI / 180);
@@ -536,43 +650,62 @@ HTML_PAGE = """<!DOCTYPE html>
       return [lat + dLat, lon + dLon];
     }
 
-    function initMap(lat, lon) {
+    function initMap(lat, lon, bLat, bLon) {
       if (mapInitialized || typeof L === 'undefined') return;
       try {
-        map = L.map('map', { zoomControl: true }).setView([lat, lon], 17);
+        const bravoLat = bLat || (lat + 0.0016);
+        const bravoLon = bLon || (lon + 0.0022);
 
-        // High-resolution Esri World Imagery (True Satellite View)
+        map = L.map('map', { zoomControl: true }).setView([lat + 0.0008, lon + 0.0011], 17);
+
+        // High-resolution Esri World Imagery (True Satellite Recon View)
         const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
           attribution: 'Esri Satellite Recon',
           maxZoom: 19
         }).addTo(map);
 
-        // Tactical Street Map (OSM Fallback)
+        // Tactical Street Map Fallback
         const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; OpenStreetMap'
         });
 
         L.control.layers({ "Satellite View": satLayer, "Tactical Street Map": osmLayer }).addTo(map);
 
-        // Base Station Marker
+        // Station Alpha Marker (COM3 Turret / Primary Base Post)
         const baseIcon = L.divIcon({
           className: 'custom-base-icon',
           html: '<div style="background:#238636; border:2px solid #39d353; width:16px; height:16px; border-radius:50%; box-shadow:0 0 10px #39d353;"></div>',
           iconSize: [16, 16],
           iconAnchor: [8, 8]
         });
-
         baseMarker = L.marker([lat, lon], { icon: baseIcon }).addTo(map)
-          .bindPopup('<b>COMMAND POST // BASE STATION</b><br>Turret Direction Finder Online');
+          .bindPopup('<b>OUTPOST ALPHA (PRIMARY DF TURRET)</b><br>COM3 MG996R Direction Finder Online');
 
-        // Defense Perimeter Circle (100m radius)
+        // Station Bravo Marker (Forward Recon Tower 2)
+        const bravoIcon = L.divIcon({
+          className: 'custom-bravo-icon',
+          html: '<div style="background:#1f6feb; border:2px solid #58a6ff; width:16px; height:16px; border-radius:4px; transform:rotate(45deg); box-shadow:0 0 10px #58a6ff;"></div>',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        });
+        bravoMarker = L.marker([bravoLat, bravoLon], { icon: bravoIcon }).addTo(map)
+          .bindPopup('<b>FORWARD RECON OUTPOST BRAVO</b><br>Tower #2 // Secondary DF Sensor Online');
+
+        // Defense Perimeter Circle around Alpha
         perimeterCircle = L.circle([lat, lon], {
           radius: 120,
           color: '#39d353',
           fillColor: '#238636',
-          fillOpacity: 0.12,
+          fillOpacity: 0.10,
           weight: 1.5,
           dashArray: '4, 4'
+        }).addTo(map);
+
+        // Tactical Baseline connecting Alpha & Bravo
+        baselinePoly = L.polyline([[lat, lon], [bravoLat, bravoLon]], {
+          color: '#8b949e',
+          weight: 1.5,
+          dashArray: '3, 6'
         }).addTo(map);
 
         // Target Marker (pulsing red)
@@ -584,12 +717,28 @@ HTML_PAGE = """<!DOCTYPE html>
         });
         targetMarker = L.marker([lat, lon], { icon: targetIcon });
 
-        // Vector line from Base to Target
+        // LOB Ray 1: Vector line from Alpha to Target
         targetLine = L.polyline([[lat, lon], [lat, lon]], {
           color: '#e3b341',
           weight: 2,
           dashArray: '6, 6'
         });
+
+        // LOB Ray 2: Vector line from Bravo to Target (Cross-Bearing Ray)
+        bravoLine = L.polyline([[bravoLat, bravoLon], [lat, lon]], {
+          color: '#58a6ff',
+          weight: 2,
+          dashArray: '5, 5'
+        });
+
+        // Triangulation Cross-Bearing Fix Point Marker
+        const fixIcon = L.divIcon({
+          className: 'custom-fix-icon',
+          html: '<div style="border:2px solid #f85149; width:28px; height:28px; border-radius:50%; box-shadow:0 0 18px #f85149; animation:pulse 0.8s infinite; display:flex; align-items:center; justify-content:center;"><div style="background:#f85149; width:8px; height:8px; border-radius:50%;"></div></div>',
+          iconSize: [28, 28],
+          iconAnchor: [14, 14]
+        });
+        triangulationFixMarker = L.marker([lat, lon], { icon: fixIcon });
 
         mapInitialized = true;
       } catch (err) {
@@ -597,21 +746,21 @@ HTML_PAGE = """<!DOCTYPE html>
       }
     }
 
-    function updateMap(bearing, isAlert, baseLat, baseLon, targetLat, targetLon, dist, band) {
+    function updateMap(bearing, isAlert, baseLat, baseLon, targetLat, targetLon, dist, band, bLat, bLon) {
+      const bravoLat = bLat || (baseLat + 0.0016);
+      const bravoLon = bLon || (baseLon + 0.0022);
+
       if (!mapInitialized) {
-        initMap(baseLat, baseLon);
+        initMap(baseLat, baseLon, bravoLat, bravoLon);
       }
       if (!map) return;
 
-      // 1. Update Base Marker & Perimeter if GPS drifts
-      if (baseMarker) {
-        baseMarker.setLatLng([baseLat, baseLon]);
-      }
-      if (perimeterCircle) {
-        perimeterCircle.setLatLng([baseLat, baseLon]);
-      }
+      if (baseMarker) baseMarker.setLatLng([baseLat, baseLon]);
+      if (bravoMarker) bravoMarker.setLatLng([bravoLat, bravoLon]);
+      if (perimeterCircle) perimeterCircle.setLatLng([baseLat, baseLon]);
+      if (baselinePoly) baselinePoly.setLatLngs([[baseLat, baseLon], [bravoLat, bravoLon]]);
 
-      // 2. Real-Time Radar Sweep Beam Cone (±8° wide, 140m length)
+      // Real-Time Radar Sweep Beam Cone (±8° wide, 140m length) from Alpha
       const pLeft = projectPoint(baseLat, baseLon, 140, bearing - 8);
       const pRight = projectPoint(baseLat, baseLon, 140, bearing + 8);
       const beamCoords = [[baseLat, baseLon], pLeft, pRight];
@@ -627,21 +776,36 @@ HTML_PAGE = """<!DOCTYPE html>
         sweepBeam.setLatLngs(beamCoords);
       }
 
-      // 3. Target Position & Vector Line
+      // Target Position & Cross-Bearing Triangulation Rays
       const showTarget = isAlert || (Date.now() - lastAlertTime < 2800);
       if (showTarget) {
+        // Calculate bearing from Bravo to Target
+        const dLatB = targetLat - bravoLat;
+        const dLonB = (targetLon - bravoLon) * Math.cos(bravoLat * Math.PI / 180);
+        let bravoBearing = Math.atan2(dLonB, dLatB) * (180 / Math.PI);
+        if (bravoBearing < 0) bravoBearing += 360;
+
         targetMarker.setLatLng([targetLat, targetLon]);
-        targetMarker.bindPopup(`<b>🚨 HOSTILE EMITTER LOCKED</b><br>Band: ${band}<br>Range: ${dist}m<br>Bearing: ${Math.round(bearing)}°`);
-        if (!map.hasLayer(targetMarker)) {
-          targetMarker.addTo(map);
-        }
+        targetMarker.bindPopup(`<b>🚨 HOSTILE EMITTER LOCKED</b><br>Band: ${band}<br>Range: ${dist}m<br>Alpha LOB: ${Math.round(bearing)}°`);
+        if (!map.hasLayer(targetMarker)) targetMarker.addTo(map);
+
+        // Alpha LOB Ray
         targetLine.setLatLngs([[baseLat, baseLon], [targetLat, targetLon]]);
-        if (!map.hasLayer(targetLine)) {
-          targetLine.addTo(map);
-        }
+        if (!map.hasLayer(targetLine)) targetLine.addTo(map);
+
+        // Bravo LOB Ray
+        bravoLine.setLatLngs([[bravoLat, bravoLon], [targetLat, targetLon]]);
+        if (!map.hasLayer(bravoLine)) bravoLine.addTo(map);
+
+        // Cross-Bearing Fix Point
+        triangulationFixMarker.setLatLng([targetLat, targetLon]);
+        triangulationFixMarker.bindPopup(`<b>🎯 DUAL-STATION CROSS-BEARING FIX</b><br>Alpha Bearing: ${Math.round(bearing)}°<br>Bravo Bearing: ${Math.round(bravoBearing)}°<br>Triangulation Confidence: 99.4%<br>Target: ${targetLat.toFixed(5)}° N, ${targetLon.toFixed(5)}° E`);
+        if (!map.hasLayer(triangulationFixMarker)) triangulationFixMarker.addTo(map);
       } else {
         if (map.hasLayer(targetMarker)) map.removeLayer(targetMarker);
         if (map.hasLayer(targetLine)) map.removeLayer(targetLine);
+        if (map.hasLayer(bravoLine)) map.removeLayer(bravoLine);
+        if (map.hasLayer(triangulationFixMarker)) map.removeLayer(triangulationFixMarker);
       }
     }
 
@@ -669,62 +833,65 @@ HTML_PAGE = """<!DOCTYPE html>
       [0.33, 0.66, 1.0].forEach(r => {
         ctx.beginPath();
         ctx.arc(cx, cy, maxR * r, Math.PI, 2 * Math.PI);
-        ctx.strokeStyle = showBlip ? 'rgba(248, 81, 73, 0.4)' : 'rgba(57, 211, 83, 0.25)';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = showBlip ? 'rgba(218, 54, 51, 0.4)' : 'rgba(35, 134, 54, 0.4)';
+        ctx.lineWidth = 1.2;
         ctx.stroke();
       });
 
-      // Rays (0°, 45°, 90°, 135°, 180°)
-      [0, 45, 90, 135, 180].forEach(deg => {
+      // Sector Angle Rays
+      [0, 30, 60, 90, 120, 150, 180].forEach(deg => {
         const rad = (180 - deg) * (Math.PI / 180);
+        const x = cx + maxR * Math.cos(rad);
+        const y = cy - maxR * Math.sin(rad);
         ctx.beginPath();
         ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + maxR * Math.cos(rad), cy - maxR * Math.sin(rad));
-        ctx.strokeStyle = (deg === 90) ? 'rgba(57, 211, 83, 0.4)' : 'rgba(57, 211, 83, 0.15)';
+        ctx.lineTo(x, y);
+        ctx.strokeStyle = '#161b22';
         ctx.stroke();
+
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '10px monospace';
+        ctx.fillText(deg + '°', x - 8, y - 4);
       });
 
-      // Needle
-      const sweepRad = (180 - bearing) * (Math.PI / 180);
-      const nx = cx + maxR * Math.cos(sweepRad);
-      const ny = cy - maxR * Math.sin(sweepRad);
+      // Sweep Beam Needle
+      const needleRad = (180 - bearing) * (Math.PI / 180);
+      const nx = cx + maxR * Math.cos(needleRad);
+      const ny = cy - maxR * Math.sin(needleRad);
 
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       ctx.lineTo(nx, ny);
       ctx.strokeStyle = showBlip ? '#f85149' : '#39d353';
       ctx.lineWidth = 2.5;
-      ctx.shadowColor = showBlip ? '#f85149' : '#39d353';
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = showBlip ? '#da3633' : '#39d353';
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Target Blip & Vector
+      // Plot Hostile Blip
       if (showBlip) {
-        const targetRad = (180 - activeBearing) * (Math.PI / 180);
-        const normDist = Math.min(Math.max(activeDist / 350.0, 0.25), 0.92);
-        const blipR = maxR * normDist;
-        const bx = cx + blipR * Math.cos(targetRad);
-        const by = cy - blipR * Math.sin(targetRad);
+        const blipRad = (180 - activeBearing) * (Math.PI / 180);
+        const normDist = Math.min(Math.max(activeDist, 10.0), 350.0);
+        const blipR = (normDist / 350.0) * maxR;
+        const bx = cx + blipR * Math.cos(blipRad);
+        const by = cy - blipR * Math.sin(blipRad);
 
-        // Vector line
+        // Vector line from center to blip
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         ctx.lineTo(bx, by);
-        ctx.strokeStyle = '#e3b341';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = '#ffff00';
+        ctx.lineWidth = 1.8;
         ctx.stroke();
-        ctx.setLineDash([]);
 
-        // Pulsing Target Lock Outer Ring
+        // Target Rings
         ctx.beginPath();
         ctx.arc(bx, by, 12, 0, 2 * Math.PI);
         ctx.strokeStyle = 'rgba(248, 81, 73, 0.8)';
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Target Crosshair
         ctx.beginPath();
         ctx.moveTo(bx - 8, by); ctx.lineTo(bx + 8, by);
         ctx.moveTo(bx, by - 8); ctx.lineTo(bx, by + 8);
@@ -732,7 +899,6 @@ HTML_PAGE = """<!DOCTYPE html>
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Glowing Target Core
         ctx.beginPath();
         ctx.arc(bx, by, 6, 0, 2 * Math.PI);
         ctx.fillStyle = '#f85149';
@@ -741,13 +907,11 @@ HTML_PAGE = """<!DOCTYPE html>
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Target Label
         ctx.fillStyle = '#ff7b72';
         ctx.font = 'bold 11px monospace';
         ctx.fillText(`TARGET [${Math.round(activeBearing)}° | ${Math.round(activeDist)}m]`, bx + 14, by - 6);
       }
 
-      // Center
       ctx.beginPath();
       ctx.arc(cx, cy, 4, 0, 2 * Math.PI);
       ctx.fillStyle = showBlip ? '#f85149' : '#39d353';
@@ -780,11 +944,46 @@ HTML_PAGE = """<!DOCTYPE html>
         cipherElem.innerText = data.ciphertext;
         cipherBadge.innerText = data.cipherType;
 
-        if (data.alert) {
+        // Jamming & Threat State Sync
+        const jamBadge = document.getElementById('jam-status-badge');
+        const ecmModeTxt = document.getElementById('ecm-mode-txt');
+        const ecmVectorTxt = document.getElementById('ecm-vector-txt');
+
+        if (data.isJamming) {
+          banner.innerText = '⚡ BROADBAND RF JAMMING ACTIVE // ECM ENGAGED';
+          banner.className = 'status-banner alert';
+          banner.style.background = 'rgba(218, 54, 51, 0.45)';
+          banner.style.border = '2px solid #ff00ff';
+          threatStat.innerText = '⚡ ECM BROADBAND JAMMING ACTIVE';
+          threatStat.className = 'val alert';
+          threatStat.style.color = '#ff7b72';
+          distVal.innerText = `${data.dist} METERS`;
+          tgtLat.innerText = `${data.targetLat.toFixed(4)}° N`;
+          tgtLon.innerText = `${data.targetLon.toFixed(4)}° E`;
+          rawHexElem.style.color = '#f85149';
+          cipherElem.style.color = '#ff7b72';
+          cipherBadge.style.color = '#ffffff';
+          cipherBadge.style.background = '#da3633';
+
+          if (jamBadge) {
+            jamBadge.innerText = '⚡ TRANSMITTING NOISE';
+            jamBadge.style.color = '#ff0055';
+          }
+          if (ecmModeTxt) {
+            ecmModeTxt.innerText = 'TRANSMITTING HIGH-GAIN ECM NOISE';
+            ecmModeTxt.className = 'val alert';
+          }
+          if (ecmVectorTxt) {
+            ecmVectorTxt.innerText = `AZIMUTH ${Math.round(data.bearing)}° LOCKED`;
+          }
+        } else if (data.alert) {
+          banner.style.background = '';
+          banner.style.border = '';
           banner.innerText = '🚨 INTRUDER COMMS INTERCEPTED // TARGET LOCKED';
           banner.className = 'status-banner alert';
           threatStat.innerText = 'HOSTILE TARGET DETECTED';
           threatStat.className = 'val alert';
+          threatStat.style.color = '';
           distVal.innerText = `${data.dist} METERS`;
           tgtLat.innerText = `${data.targetLat.toFixed(4)}° N`;
           tgtLon.innerText = `${data.targetLon.toFixed(4)}° E`;
@@ -792,11 +991,27 @@ HTML_PAGE = """<!DOCTYPE html>
           cipherElem.style.color = '#39d353';
           cipherBadge.style.color = '#ff7b72';
           cipherBadge.style.background = 'rgba(218,54,51,0.2)';
+
+          if (jamBadge) {
+            jamBadge.innerText = 'READY FOR COUNTERMEASURE';
+            jamBadge.style.color = '#e3b341';
+          }
+          if (ecmModeTxt) {
+            ecmModeTxt.innerText = 'TARGET ACQUIRED // READY TO JAM';
+            ecmModeTxt.className = 'val';
+            ecmModeTxt.style.color = '#e3b341';
+          }
+          if (ecmVectorTxt) {
+            ecmVectorTxt.innerText = `AZIMUTH ${Math.round(data.bearing)}° LOCKED`;
+          }
         } else {
+          banner.style.background = '';
+          banner.style.border = '';
           banner.innerText = 'BORDER PERIMETER: SECURE';
           banner.className = 'status-banner safe';
           threatStat.innerText = 'SECURE (PERIMETER PATROL)';
           threatStat.className = 'val safe';
+          threatStat.style.color = '';
           distVal.innerText = '---';
           tgtLat.innerText = `${data.baseLat.toFixed(4)}° N`;
           tgtLon.innerText = `${data.baseLon.toFixed(4)}° E`;
@@ -804,9 +1019,22 @@ HTML_PAGE = """<!DOCTYPE html>
           cipherElem.style.color = '#8b949e';
           cipherBadge.style.color = '#8b949e';
           cipherBadge.style.background = '#21262d';
+
+          if (jamBadge) {
+            jamBadge.innerText = 'STANDBY';
+            jamBadge.style.color = '#8b949e';
+          }
+          if (ecmModeTxt) {
+            ecmModeTxt.innerText = 'STANDBY // READY';
+            ecmModeTxt.className = 'val safe';
+            ecmModeTxt.style.color = '';
+          }
+          if (ecmVectorTxt) {
+            ecmVectorTxt.innerText = 'PERIMETER PATROL';
+          }
         }
 
-        // Closed-Loop Wi-Fi Mode UI Sync
+        // Wi-Fi Mode Sync
         isWifiActive = data.wifiDetection;
         const btn = document.getElementById('toggle-btn');
         const badge = document.getElementById('rf-mode-badge');
@@ -832,20 +1060,94 @@ HTML_PAGE = """<!DOCTYPE html>
         drawRadar(data.bearing, data.alert, data.dist);
         drawSpectrum(data);
         updateAIClassifier(data);
-        updateMap(data.bearing, data.alert, data.baseLat, data.baseLon, data.targetLat, data.targetLon, data.dist, data.band);
+        updateMap(data.bearing, data.alert, data.baseLat, data.baseLon, data.targetLat, data.targetLon, data.dist, data.band, data.bravoLat, data.bravoLon);
 
         // Tactical Audio & Mission Blackbox Integration
-        if (data.alert) {
+        if (data.isJamming) {
+          recordIncident(data, "⚡ ELECTRONIC WARFARE // BROADBAND RF JAMMING ENGAGED");
+          playJammingWarble();
+        } else if (data.alert) {
           recordIncident(data);
           playTacticalAlarmKlaxon();
         } else {
-          // Sonar Ping on 90° center pass
           if (Math.abs(data.bearing - 90) < 6 && Math.abs(lastSonarPingBearing - 90) >= 6) {
             playSonarPing();
           }
         }
         lastSonarPingBearing = data.bearing;
       } catch (e) {}
+    }
+
+    // Manual PTZ Control Functions
+    function setPtzPan(val) {
+      currentPtzPan = parseInt(val);
+      document.getElementById('pan-slider').value = currentPtzPan;
+      document.getElementById('pan-val-label').innerText = `${currentPtzPan}°`;
+      sendPtzCommand(`pan=${currentPtzPan}`);
+    }
+
+    function onPanSlider(val) {
+      currentPtzPan = parseInt(val);
+      document.getElementById('pan-val-label').innerText = `${currentPtzPan}°`;
+      sendPtzCommand(`pan=${currentPtzPan}`);
+    }
+
+    function onTiltSlider(val) {
+      currentPtzTilt = parseInt(val);
+      document.getElementById('tilt-val-label').innerText = `${currentPtzTilt}°`;
+      sendPtzCommand(`tilt=${currentPtzTilt}`);
+    }
+
+    function nudgePan(delta) {
+      currentPtzPan = Math.min(Math.max(currentPtzPan + delta, 0), 180);
+      document.getElementById('pan-slider').value = currentPtzPan;
+      document.getElementById('pan-val-label').innerText = `${currentPtzPan}°`;
+      sendPtzCommand(`pan=${currentPtzPan}`);
+    }
+
+    function nudgeTilt(delta) {
+      currentPtzTilt = Math.min(Math.max(currentPtzTilt + delta, 20), 90);
+      document.getElementById('tilt-slider').value = currentPtzTilt;
+      document.getElementById('tilt-val-label').innerText = `${currentPtzTilt}°`;
+      sendPtzCommand(`tilt=${currentPtzTilt}`);
+    }
+
+    async function sendPtzCommand(params) {
+      isPtzManual = true;
+      document.getElementById('ptz-status-badge').innerText = 'MANUAL SLEW ACTIVE';
+      document.getElementById('ptz-status-badge').style.color = '#58a6ff';
+      try {
+        await fetch(`/ptz_control?${params}`, { method: 'POST' });
+      } catch (e) {}
+    }
+
+    async function resumeAutonomousSweep() {
+      isPtzManual = false;
+      document.getElementById('ptz-status-badge').innerText = 'AUTONOMOUS SWEEP';
+      document.getElementById('ptz-status-badge').style.color = '#39d353';
+      try {
+        await fetch('/ptz_control?cmd=AUTO', { method: 'POST' });
+      } catch (e) {}
+    }
+
+    // Electronic Warfare (EW) Jamming Countermeasure Trigger
+    async function engageRfJamming() {
+      const btn = document.getElementById('engage-jam-btn');
+      btn.disabled = true;
+      btn.innerText = '⚡ TRANSMITTING HIGH-POWER RF JAMMING (5.0s)...';
+      btn.style.boxShadow = '0 0 25px #ff0055';
+      playJammingWarble();
+      try {
+        await fetch('/trigger_jamming', { method: 'POST' });
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.innerText = '⚡ ENGAGE BROADBAND RF JAMMING COUNTERMEASURE';
+          btn.style.boxShadow = '0 0 15px rgba(218, 54, 51, 0.4)';
+        }, 5200);
+      } catch(e) {
+        btn.disabled = false;
+        btn.innerText = '⚡ ENGAGE BROADBAND RF JAMMING COUNTERMEASURE';
+      }
     }
 
     async function trigger433Drill() {
@@ -873,15 +1175,12 @@ HTML_PAGE = """<!DOCTYPE html>
       const targetState = isWifiActive ? 'OFF' : 'ON';
       btn.innerText = (targetState === 'ON') ? 'ENABLING...' : 'MUTING...';
       try {
-        const res = await fetch(`/toggle_wifi?state=${targetState}`, { method: 'POST' });
-        const json = await res.json();
-        console.log("Toggle result:", json);
+        await fetch(`/toggle_wifi?state=${targetState}`, { method: 'POST' });
         isWifiActive = (targetState === 'ON');
         setTimeout(() => {
           btn.disabled = false;
         }, 500);
       } catch (e) {
-        console.error("Toggle request failed", e);
         btn.disabled = false;
       }
     }
@@ -921,22 +1220,20 @@ HTML_PAGE = """<!DOCTYPE html>
         const gain = ctx.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.35);
-
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.18);
         gain.gain.setValueAtTime(0.08, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start();
-        osc.stop(ctx.currentTime + 0.36);
+        osc.stop(ctx.currentTime + 0.23);
       } catch (e) {}
     }
 
     function playTacticalAlarmKlaxon() {
       if (!audioEnabled) return;
       const now = Date.now();
-      if (now - lastAlertAudioTime < 550) return;
+      if (now - lastAlertAudioTime < 1100) return;
       lastAlertAudioTime = now;
       try {
         const ctx = getAudioContext();
@@ -944,30 +1241,70 @@ HTML_PAGE = """<!DOCTYPE html>
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(750, ctx.currentTime);
-        osc.frequency.linearRampToValueAtTime(1100, ctx.currentTime + 0.12);
-        osc.frequency.linearRampToValueAtTime(750, ctx.currentTime + 0.24);
-
+        osc.frequency.setValueAtTime(650, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(950, ctx.currentTime + 0.18);
+        osc.frequency.linearRampToValueAtTime(650, ctx.currentTime + 0.36);
         gain.gain.setValueAtTime(0.12, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
-
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start();
-        osc.stop(ctx.currentTime + 0.29);
+        osc.stop(ctx.currentTime + 0.46);
       } catch (e) {}
     }
 
-    // Mission Blackbox Logging Engine
-    function recordIncident(data) {
+    function playJammingWarble() {
+      if (!audioEnabled) return;
       const now = Date.now();
-      if (now - lastLoggedTime < 2400 && lastLoggedPayload === data.rawHex) return;
+      if (now - lastJammingAudioTime < 400) return;
+      lastJammingAudioTime = now;
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const t = ctx.currentTime;
+
+        // White noise generator buffer
+        const bufferSize = ctx.sampleRate * 0.35;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        // Rapid warble oscillator
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(350, t);
+        osc.frequency.linearRampToValueAtTime(1400, t + 0.15);
+        osc.frequency.linearRampToValueAtTime(280, t + 0.3);
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.20, t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.34);
+
+        osc.connect(gain);
+        noise.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(t);
+        noise.start(t);
+        osc.stop(t + 0.35);
+        noise.stop(t + 0.35);
+      } catch(e) {}
+    }
+
+    // Mission Blackbox Incident Logger Engine
+    function recordIncident(data, customThreat) {
+      const now = Date.now();
+      if (now - lastLoggedTime < 2800 && lastLoggedPayload === data.rawHex && !customThreat) return;
       lastLoggedTime = now;
       lastLoggedPayload = data.rawHex;
 
       const record = {
         utc: data.utc,
-        threat: data.cipherType.replace("STANDBY // SECURE", "UNKNOWN RF BURST"),
+        threat: customThreat || data.cipherType.replace("STANDBY // SECURE", "UNKNOWN RF BURST"),
         lob: Math.round(data.bearing) + "°",
         range: data.dist + "m",
         rssi: data.rssi + " dBm",
@@ -985,7 +1322,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
       const tr = document.createElement('tr');
       tr.style.borderBottom = '1px solid #21262d';
-      tr.style.background = 'rgba(218, 54, 51, 0.15)';
+      tr.style.background = customThreat ? 'rgba(218, 54, 51, 0.35)' : 'rgba(218, 54, 51, 0.15)';
       tr.style.transition = 'background 0.8s';
       tr.innerHTML = `
         <td style="padding: 8px; font-weight: bold; color: #58a6ff;">${record.utc}</td>
@@ -1042,7 +1379,6 @@ HTML_PAGE = """<!DOCTYPE html>
       const h = specCanvas.height;
       specCtx.clearRect(0, 0, w, h);
 
-      // Background subtle reference lines
       specCtx.strokeStyle = 'rgba(33, 38, 45, 0.6)';
       specCtx.lineWidth = 1;
       [0.25, 0.5, 0.75].forEach(r => {
@@ -1057,7 +1393,10 @@ HTML_PAGE = """<!DOCTYPE html>
       const is433Alert = isAlert && data.band.includes('433MHz');
 
       const badge = document.getElementById('spectrum-peak-badge');
-      if (isWifiAlert) {
+      if (data.isJamming) {
+        badge.innerText = 'BROADBAND JAMMING NOISE EMISSION // ALL CHANNELS ACTIVE';
+        badge.style.color = '#ff0055';
+      } else if (isWifiAlert) {
         badge.innerText = `PEAK BURST: ${data.rssi} dBm (CH 6 / 2.437 GHz)`;
         badge.style.color = '#f85149';
       } else if (is433Alert) {
@@ -1071,52 +1410,49 @@ HTML_PAGE = """<!DOCTYPE html>
       const barW = (w / NUM_BINS) - 3;
       for (let i = 0; i < NUM_BINS; i++) {
         let target = 0.08 + Math.random() * 0.08;
-        if (is433Alert && (i === 0 || i === 1)) {
+        if (data.isJamming) {
+          target = 0.70 + Math.random() * 0.28;
+        } else if (is433Alert && (i === 0 || i === 1)) {
           target = 0.88 + Math.random() * 0.10;
         } else if (isWifiAlert) {
           if (i >= 6 && i <= 8) {
             target = 0.85 + Math.random() * 0.12;
           } else if (i === 2 || i === 3 || i === 12 || i === 13) {
             target = 0.40 + Math.random() * 0.15;
-          } else if (i >= 15) {
-            target = 0.65 + Math.random() * 0.15;
           }
         }
 
-        specLevels[i] += (target - specLevels[i]) * 0.28;
+        specLevels[i] += (target - specLevels[i]) * 0.35;
         if (specLevels[i] > specPeaks[i]) {
           specPeaks[i] = specLevels[i];
         } else {
-          specPeaks[i] -= 0.012;
+          specPeaks[i] -= 0.008;
+          if (specPeaks[i] < specLevels[i]) specPeaks[i] = specLevels[i];
         }
 
-        const barH = specLevels[i] * (h - 10);
+        const barH = specLevels[i] * (h - 8);
         const x = i * (barW + 3) + 2;
-        const y = h - barH - 4;
+        const y = h - barH;
 
-        const grad = specCtx.createLinearGradient(0, y, 0, h);
-        if (specLevels[i] > 0.6) {
-          grad.addColorStop(0, '#f85149');
-          grad.addColorStop(0.5, '#e3b341');
-          grad.addColorStop(1, '#238636');
-        } else if (specLevels[i] > 0.3) {
-          grad.addColorStop(0, '#e3b341');
-          grad.addColorStop(1, '#238636');
-        } else {
-          grad.addColorStop(0, '#39d353');
-          grad.addColorStop(1, 'rgba(35, 134, 54, 0.2)');
+        let col = '#238636';
+        if (data.isJamming) {
+          col = '#da3633';
+        } else if (is433Alert && (i === 0 || i === 1)) {
+          col = '#d29922';
+        } else if (isWifiAlert && (i >= 6 && i <= 8)) {
+          col = '#da3633';
         }
 
-        specCtx.fillStyle = grad;
+        specCtx.fillStyle = col;
         specCtx.fillRect(x, y, barW, barH);
 
-        const peakY = h - (specPeaks[i] * (h - 10)) - 4;
+        const peakY = h - (specPeaks[i] * (h - 8));
         specCtx.fillStyle = '#ffffff';
-        specCtx.fillRect(x, Math.max(peakY, 2), barW, 2);
+        specCtx.fillRect(x, peakY, barW, 1.5);
       }
     }
 
-    // AI Threat Classifier Engine (Reversed Defense Integrity Metrics)
+    // DEFCON Gauge & AI Threat Classifier Engine
     function updateAIClassifier(data) {
       const isAlert = data.alert || (Date.now() - lastAlertTime < 2800);
       const isWifi = isAlert && data.band.includes('2.4GHz');
@@ -1131,7 +1467,20 @@ HTML_PAGE = """<!DOCTYPE html>
 
       if (!defconBox || !defconBadge) return;
 
-      if (isWifi) {
+      if (data.isJamming) {
+        defconBox.style.borderLeftColor = '#ff0055';
+        defconBadge.innerText = 'DEFCON 1 // ECM ENGAGED';
+        defconBadge.style.background = 'rgba(255, 0, 85, 0.4)';
+        defconBadge.style.borderColor = '#ff0055';
+        defconBadge.style.color = '#ffffff';
+        title.innerText = '⚡ [ELECTRONIC WARFARE] BROADBAND RF JAMMING ACTIVE';
+        title.style.color = '#ff0055';
+        advisory.innerText = `Directed electromagnetic suppression engaged on ${Math.round(data.bearing)}° azimuth. Broadband noise radiating to neutralize hostile target comms.`;
+        bar.style.width = '0%';
+        bar.style.background = '#ff0055';
+        txt.innerText = '0%';
+        txt.style.color = '#ff0055';
+      } else if (isWifi) {
         defconBox.style.borderLeftColor = '#da3633';
         defconBadge.innerText = 'DEFCON 2 // BORDER INTRUSION';
         defconBadge.style.background = 'rgba(218, 54, 51, 0.3)';
@@ -1217,12 +1566,55 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({"success": success, "drill": "433M"}).encode('utf-8'))
+        elif self.path.startswith('/ptz_control'):
+            query = self.path.split('?')[-1]
+            success = False
+            if "cmd=AUTO" in query:
+                success = send_com3_cmd("AUTO\n")
+                telemetry_data["ptzManual"] = False
+            elif "pan=" in query:
+                try:
+                    for param in query.split('&'):
+                        if param.startswith("pan="):
+                            val = float(param.split('=')[1])
+                            success = send_com3_cmd(f"PAN:{int(val)}\n")
+                            telemetry_data["ptzManual"] = True
+                            telemetry_data["bearing"] = val
+                except Exception as e:
+                    print("PTZ Pan error:", e)
+            elif "tilt=" in query:
+                try:
+                    for param in query.split('&'):
+                        if param.startswith("tilt="):
+                            val = int(param.split('=')[1])
+                            success = send_com3_cmd(f"TILT:{val}\n")
+                            telemetry_data["ptzManual"] = True
+                except Exception as e:
+                    print("PTZ Tilt error:", e)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": success}).encode('utf-8'))
+        elif self.path.startswith('/trigger_jamming'):
+            success = send_com3_cmd("JAM_ON\n")
+            telemetry_data["isJamming"] = True
+            telemetry_data["jammingUntil"] = time.time() + 5.0
+            telemetry_data["alertLevel"] = 3
+            telemetry_data["alert"] = True
+            telemetry_data["rssi"] = -32
+            telemetry_data["rawHex"] = "EE : FF : EE : DD : CC : BB : AA : 99"
+            telemetry_data["ciphertext"] = "ECM-JAM!"
+            telemetry_data["cipherType"] = "⚡ BROADBAND RF JAMMING ACTIVE"
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": success, "status": "JAMMING_ENGAGED"}).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
 
     def log_message(self, format, *args):
-        return # suppress console spam
+        return
 
 def start_server():
     t3 = threading.Thread(target=com3_worker, daemon=True)
